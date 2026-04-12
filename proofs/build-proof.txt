@@ -1,0 +1,20 @@
+PQ-FL Build Proof
+Date: 2026-04-09
+
+Command:
+docker build -t pqfl-server .
+
+Result:
+The Docker image rebuilt successfully.
+
+Excerpt:
+#29 exporting to image
+#29 exporting layers done
+#29 exporting manifest sha256:9deeaff3e3d9fe8879ef5017071767b3c375010b6059330130edaa177719f38a 0.0s done
+#29 exporting config sha256:935434f1f25b1b4d3f1854191905701d451e1dd854bcf97f911aeb3f06151a09 0.0s done
+#29 exporting attestation manifest sha256:26d3c22b25957b0a01ad89ee1ecea045ef17c173aeb0f29e4d9f7389e97c7bf5
+#29 exporting attestation manifest sha256:26d3c22b25957b0a01ad89ee1ecea045ef17c173aeb0f29e4d9f7389e97c7bf5 0.1s done
+#29 exporting manifest list sha256:50fb8f34d719b6648523476f9980a5ff700ff2e5f4c8348e1dd7fe438fcc9556 0.0s done
+#29 naming to docker.io/library/pqfl-server:latest done
+#29 unpacking to docker.io/library/pqfl-server:latest 0.0s done
+#29 DONE 0.3s

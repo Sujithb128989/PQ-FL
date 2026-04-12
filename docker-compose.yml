@@ -1,0 +1,37 @@
+services:
+  pqfl-server:
+    image: pqfl-server:latest
+    container_name: pqfl-server-container
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./models:/app/models
+      - ./data:/app/data
+    restart: unless-stopped
+
+  pqfl-admin-demo:
+    image: pqfl-server:latest
+    depends_on:
+      - pqfl-server
+    profiles: ["demo"]
+    volumes:
+      - ./certs:/app/certs:ro
+    environment:
+      PQFL_ADDRESS: pqfl-server:50051
+    command: ["/app/pqfl_admin_demo"]
+
+  pqfl-worker-demo:
+    image: pqfl-server:latest
+    depends_on:
+      - pqfl-server
+    profiles: ["demo"]
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./data:/app/data:ro
+    environment:
+      PQFL_ADDRESS: pqfl-server:50051
+    command: ["/app/pqfl_worker_demo", "compose-worker-1", "compose-worker-1-trainer"]

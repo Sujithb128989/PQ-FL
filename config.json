@@ -1,0 +1,26 @@
+{
+  "address": "0.0.0.0:50051",
+  "key_path": "data/master.key",
+  "payload_key_path": "data/payload.key",
+  "log_level": "INFO",
+  "checkpoint_dir": "models",
+  "state_store_path": "data/state.json",
+  "audit_event_retention": 2000,
+  "admin_peer_identities": ["pqfl-admin"],
+  "worker_peer_identities": ["pqfl-worker"],
+  "fl": {
+    "required_clients": 2,
+    "target_rounds": 100,
+    "learning_rate": 0.01,
+    "batch_size": 32,
+    "aggregation_strategy": "krum",
+    "server_momentum": 0.25,
+    "default_assignment_ttl_seconds": 180
+  },
+  "privacy": {
+    "dp_epsilon": 2.0,
+    "dp_delta": 1e-5,
+    "clip_norm": 1.5,
+    "trimmed_mean_beta": 0.1
+  }
+}

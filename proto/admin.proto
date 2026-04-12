@@ -1,0 +1,242 @@
+syntax = "proto3";
+
+package pqfl;
+
+service Admin {
+  rpc GetSystemStatus(AdminEmpty) returns (SystemStatus);
+  rpc ListModels(ListModelsRequest) returns (ModelRegistrySnapshot);
+  rpc ListClients(ListClientsRequest) returns (RegisteredClients);
+  rpc ListWorkers(ListWorkersRequest) returns (RegisteredWorkers);
+  rpc ListWorkerTasks(ListWorkerTasksRequest) returns (WorkerTasksResponse);
+  rpc UpsertDataset(UpsertDatasetRequest) returns (DatasetRecord);
+  rpc ListDatasets(ListDatasetsRequest) returns (DatasetCatalog);
+  rpc CreateTrainingJob(CreateTrainingJobRequest) returns (TrainingJob);
+  rpc ListTrainingJobs(ListTrainingJobsRequest) returns (TrainingJobsResponse);
+  rpc RollbackModel(RollbackModelRequest) returns (RollbackModelResponse);
+  rpc RotateAtRestKey(RotateKeyRequest) returns (RotateKeyResponse);
+  rpc ListAuditEvents(AuditEventsRequest) returns (AuditEventsResponse);
+}
+
+message AdminEmpty {}
+
+message ModelHead {
+  string tenant_id = 1;
+  string model_id = 2;
+  int32 active_version = 3;
+  int32 latest_round = 4;
+  string checkpoint_path = 5;
+  string aggregation_strategy = 6;
+  int32 key_version = 7;
+}
+
+message SystemStatus {
+  int32 registered_clients = 1;
+  int32 completed_rounds = 2;
+  int32 total_submissions = 3;
+  int32 active_key_version = 4;
+  string state_path = 5;
+  repeated ModelHead active_models = 6;
+  int32 registered_datasets = 7;
+  int32 active_training_jobs = 8;
+  int32 registered_workers = 9;
+  int32 active_worker_tasks = 10;
+  int32 stored_models = 11;
+  int32 pending_assignments = 12;
+  int32 leased_assignments = 13;
+  int32 submitted_assignments = 14;
+  int32 busy_workers = 15;
+  int32 failed_worker_tasks = 16;
+}
+
+message DatasetRecord {
+  string tenant_id = 1;
+  string model_id = 2;
+  string dataset_id = 3;
+  string fingerprint = 4;
+  string storage_uri = 5;
+  string format = 6;
+  int32 sample_count = 7;
+  int32 shard_count = 8;
+  bool active = 9;
+  string created_at = 10;
+}
+
+message UpsertDatasetRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+  string dataset_id = 3;
+  string fingerprint = 4;
+  string storage_uri = 5;
+  string format = 6;
+  int32 sample_count = 7;
+  int32 shard_count = 8;
+  bool active = 9;
+}
+
+message ListDatasetsRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+}
+
+message DatasetCatalog {
+  repeated DatasetRecord datasets = 1;
+}
+
+message ListModelsRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+}
+
+message ModelRegistrySnapshot {
+  repeated ModelHead models = 1;
+}
+
+message RegisteredClientInfo {
+  string tenant_id = 1;
+  string model_id = 2;
+  string client_id = 3;
+  int32 local_dataset_size = 4;
+  string hardware_info = 5;
+  int32 last_active_round = 6;
+  string registered_at = 7;
+  string dataset_fingerprint = 8;
+}
+
+message ListClientsRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+}
+
+message RegisteredClients {
+  repeated RegisteredClientInfo clients = 1;
+}
+
+message RegisteredWorkerInfo {
+  string worker_id = 1;
+  string trainer_client_id = 2;
+  string tenant_id = 3;
+  string model_id = 4;
+  string hostname = 5;
+  string launcher = 6;
+  int32 max_parallel_tasks = 7;
+  repeated string labels = 8;
+  string status = 9;
+  string registered_at = 10;
+  string last_heartbeat_at = 11;
+  string active_task_id = 12;
+}
+
+message ListWorkersRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+}
+
+message RegisteredWorkers {
+  repeated RegisteredWorkerInfo workers = 1;
+}
+
+message WorkerTaskInfo {
+  string task_id = 1;
+  string worker_id = 2;
+  string trainer_client_id = 3;
+  string job_id = 4;
+  string assignment_id = 5;
+  string tenant_id = 6;
+  string model_id = 7;
+  string dataset_id = 8;
+  int32 round_index = 9;
+  int32 base_model_version = 10;
+  string status = 11;
+  string detail = 12;
+  int32 progress_percent = 13;
+  string issued_at = 14;
+  string started_at = 15;
+  string completed_at = 16;
+  string updated_at = 17;
+}
+
+message ListWorkerTasksRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+  string worker_id = 3;
+  string status = 4;
+}
+
+message WorkerTasksResponse {
+  repeated WorkerTaskInfo tasks = 1;
+}
+
+message CreateTrainingJobRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+  string dataset_id = 3;
+  int32 target_rounds = 4;
+  int32 planned_clients = 5;
+  int32 min_clients_per_round = 6;
+  int32 assignment_ttl_seconds = 7;
+  string notes = 8;
+}
+
+message TrainingJob {
+  string job_id = 1;
+  string tenant_id = 2;
+  string model_id = 3;
+  string dataset_id = 4;
+  int32 target_rounds = 5;
+  int32 planned_clients = 6;
+  int32 min_clients_per_round = 7;
+  int32 assignment_ttl_seconds = 8;
+  string status = 9;
+  int32 current_round = 10;
+  int32 completed_rounds = 11;
+  int32 active_model_version = 12;
+  string created_at = 13;
+  string activated_at = 14;
+  string notes = 15;
+}
+
+message ListTrainingJobsRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+  string status = 3;
+}
+
+message TrainingJobsResponse {
+  repeated TrainingJob jobs = 1;
+}
+
+message RollbackModelRequest {
+  string tenant_id = 1;
+  string model_id = 2;
+  int32 target_version = 3;
+}
+
+message RollbackModelResponse {
+  bool success = 1;
+  string message = 2;
+  ModelHead active_model = 3;
+}
+
+message RotateKeyRequest {}
+
+message RotateKeyResponse {
+  int32 active_key_version = 1;
+  string message = 2;
+}
+
+message AuditEvent {
+  string timestamp = 1;
+  string action = 2;
+  string tenant_id = 3;
+  string model_id = 4;
+  string client_id = 5;
+  string detail = 6;
+}
+
+message AuditEventsRequest {
+  int32 limit = 1;
+}
+
+message AuditEventsResponse {
+  repeated AuditEvent events = 1;
+}

@@ -1,0 +1,39 @@
+# Build artifacts
+*.o
+*.d
+*.pb.cc
+*.pb.h
+*.grpc.pb.cc
+*.grpc.pb.h
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+
+# Runtime data
+data/
+models/
+logs*.txt
+
+# Test / smoke artifacts
+smoke-data/
+smoke-certs/
+smoke-models/
+verify-data/
+verify-certs/
+verify-models/
+certs-test/
+
+# Keys (never commit real keys)
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

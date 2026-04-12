@@ -1,0 +1,3 @@
+Generating new AES-256 master key...
+{"component":"StateStore","level":"INFO","message":"Initialized empty state store at /tmp/pqfl-self-test/state/state.json","timestamp":"2026-04-09T17:15:27.680Z"}
+pqfl_self_test: PASS

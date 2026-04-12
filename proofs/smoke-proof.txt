@@ -1,0 +1,41 @@
+PQ-FL End-to-End Smoke Proof
+Date: 2026-04-09
+
+Scope:
+- Fresh PQ certificates generated
+- Isolated server container started
+- Admin bootstrap client created dataset and training job
+- Two worker sidecars leased tasks and submitted weights
+- Aggregation completed and encrypted checkpoint written
+
+Certificate generation excerpt:
+Using OpenSSL version:
+OpenSSL 1.1.1u  30 May 2023, Open Quantum Safe 2023-07
+
+Generating PQ-FL certificates using dilithium5 (ML-DSA-87)...
+
+[ok] PQ-FL certificates generated (dilithium5 / ML-DSA-87):
+- admin.crt / admin.key
+- client.crt / client.key
+- server.crt / server.key
+- worker.crt / worker.key
+
+Admin bootstrap output:
+Bootstrapped dataset demo-dataset and training job demo-tenant::demo-model::demo-dataset::2026-04-09T17:19:38.579Z
+
+Worker outputs:
+[demo-worker-1] Weights received, waiting for more clients
+[demo-worker-1] Completed task demo-tenant::demo-model::demo-dataset::2026-04-09T17:19:38.579Z::round:1::client:demo-worker-1-trainer::2026-04-09T17:19:53.422Z::worker:demo-worker-1 for round 1
+[demo-worker-2] Aggregation completed for round 1
+[demo-worker-2] Completed task demo-tenant::demo-model::demo-dataset::2026-04-09T17:19:38.579Z::round:1::client:demo-worker-2-trainer::2026-04-09T17:20:05.310Z::worker:demo-worker-2 for round 1
+
+Server log excerpt:
+{"component":"Server","level":"INFO","message":"Listening on 0.0.0.0:50051","timestamp":"2026-04-09T17:19:09.437Z"}
+{"component":"Server","level":"INFO","message":"Aggregation: krum","timestamp":"2026-04-09T17:19:09.437Z"}
+{"component":"Server","level":"INFO","message":"Required clients: 2","timestamp":"2026-04-09T17:19:09.437Z"}
+{"component":"Server","level":"INFO","message":"Applied DP noise (sigma=2.569346, epsilon=2.000000)","timestamp":"2026-04-09T17:20:05.635Z"}
+{"component":"Server","level":"INFO","message":"Saved encrypted model checkpoint: models/demo-tenant/demo-model/global_model_round_1.bin","timestamp":"2026-04-09T17:20:05.649Z"}
+
+Artifacts observed on disk:
+- proofs/smoke-data/state.json
+- proofs/smoke-models/demo-tenant/demo-model/global_model_round_1.bin

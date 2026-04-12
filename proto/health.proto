@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package grpc.health.v1;
+
+// The health check service definition.
+service Health {
+  // Sends a health check request.
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Performs a watch for the health status of a service.
+  rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse);
+}
+
+// The request message containing the service name.
+message HealthCheckRequest {
+  string service = 1;
+}
+
+// The response message containing the status.
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    // Service is not in the serving state but is not about to shut down.
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+}

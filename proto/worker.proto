@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package pqfl;
+
+service WorkerCoordinator {
+  rpc RegisterWorker(WorkerRegistration) returns (WorkerRegistrationResponse);
+  rpc LeaseTrainingTask(WorkerTaskLeaseRequest) returns (WorkerTaskLeaseResponse);
+  rpc ReportTaskStatus(WorkerTaskStatusUpdate) returns (WorkerTaskStatusAck);
+  rpc Heartbeat(WorkerHeartbeat) returns (WorkerHeartbeatAck);
+}
+
+message WorkerRegistration {
+  string worker_id = 1;
+  string trainer_client_id = 2;
+  string tenant_id = 3;
+  string model_id = 4;
+  string hostname = 5;
+  string launcher = 6;
+  int32 max_parallel_tasks = 7;
+  repeated string labels = 8;
+  int32 advertised_dataset_size = 9;
+}
+
+message WorkerRegistrationResponse {
+  bool accepted = 1;
+  string worker_id = 2;
+  string trainer_client_id = 3;
+  string server_time = 4;
+  string message = 5;
+}
+
+message WorkerTaskLeaseRequest {
+  string worker_id = 1;
+  string trainer_client_id = 2;
+  string tenant_id = 3;
+  string model_id = 4;
+}
+
+message WorkerTaskLeaseResponse {
+  bool task_ready = 1;
+  string message = 2;
+  string task_id = 3;
+  string worker_id = 4;
+  string trainer_client_id = 5;
+  string job_id = 6;
+  string assignment_id = 7;
+  string dataset_id = 8;
+  string dataset_storage_uri = 9;
+  string dataset_fingerprint = 10;
+  string dataset_format = 11;
+  int32 round_index = 12;
+  int32 base_model_version = 13;
+  int32 active_model_version = 14;
+  string checkpoint_path = 15;
+  int32 target_rounds = 16;
+  float learning_rate = 17;
+  int32 batch_size = 18;
+  int32 required_clients = 19;
+  string aggregation_strategy = 20;
+  float clip_norm = 21;
+  float server_momentum = 22;
+  string assignment_expires_at = 23;
+}
+
+message WorkerTaskStatusUpdate {
+  string worker_id = 1;
+  string task_id = 2;
+  string status = 3;
+  string detail = 4;
+  int32 progress_percent = 5;
+}
+
+message WorkerTaskStatusAck {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message WorkerHeartbeat {
+  string worker_id = 1;
+  string trainer_client_id = 2;
+  string tenant_id = 3;
+  string model_id = 4;
+  string active_task_id = 5;
+  string detail = 6;
+}
+
+message WorkerHeartbeatAck {
+  bool accepted = 1;
+  string server_time = 2;
+}

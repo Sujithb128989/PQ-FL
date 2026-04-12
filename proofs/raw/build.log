@@ -1,0 +1,100 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 3.80kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/ubuntu:focal
+#2 DONE 0.9s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.1s
+
+#4 [builder  1/10] FROM docker.io/library/ubuntu:focal@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
+#4 resolve docker.io/library/ubuntu:focal@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 0.1s done
+#4 DONE 0.1s
+
+#5 [internal] load build context
+#5 transferring context: 1.16kB done
+#5 DONE 0.0s
+
+#6 [stage-1 14/15] RUN chmod +x /app/scripts/*.sh
+#6 CACHED
+
+#7 [builder  9/10] RUN cmake .     -DOpenSSL_ROOT_DIR=/opt/openssl     -DCMAKE_PREFIX_PATH=/usr/local     -DCMAKE_BUILD_TYPE=Release
+#7 CACHED
+
+#8 [stage-1  9/15] COPY --from=builder /app/server/pqfl_worker_demo /app/pqfl_worker_demo
+#8 CACHED
+
+#9 [stage-1  3/15] COPY --from=builder /opt/openssl /opt/openssl
+#9 CACHED
+
+#10 [builder  8/10] WORKDIR /app/server
+#10 CACHED
+
+#11 [stage-1  6/15] COPY --from=builder /app/server/pqfl_test_client /app/pqfl_test_client
+#11 CACHED
+
+#12 [stage-1 12/15] RUN ldconfig
+#12 CACHED
+
+#13 [builder  3/10] RUN git clone --branch OQS-OpenSSL_1_1_1-stable --single-branch       https://github.com/open-quantum-safe/openssl.git /tmp/openssl     && cd /tmp/openssl     && git clone --branch 0.12.0 --single-branch          https://github.com/open-quantum-safe/liboqs.git oqs     && cd oqs && mkdir build && cd build     && cmake .. -GNinja -DCMAKE_INSTALL_PREFIX=/tmp/openssl/oqs -DOQS_BUILD_ONLY_LIB=ON     && ninja -j2     && ninja install     && cd /tmp/openssl     && ./Configure linux-x86_64 shared --prefix=/opt/openssl     && make -j2     && make install     && rm -rf /tmp/openssl
+#13 CACHED
+
+#14 [builder  6/10] COPY ./server ./server
+#14 CACHED
+
+#15 [stage-1  8/15] COPY --from=builder /app/server/pqfl_admin_demo /app/pqfl_admin_demo
+#15 CACHED
+
+#16 [stage-1 11/15] COPY ./config.json /app/config.json
+#16 CACHED
+
+#17 [stage-1  7/15] COPY --from=builder /app/server/pqfl_self_test /app/pqfl_self_test
+#17 CACHED
+
+#18 [builder  4/10] RUN git clone --recurse-submodules -b v1.62.1 https://github.com/grpc/grpc /tmp/grpc   && cd /tmp/grpc   && mkdir -p build && cd build   && cmake ..        -DCMAKE_BUILD_TYPE=Release        -DCMAKE_INSTALL_PREFIX=/usr/local        -DgRPC_INSTALL=ON        -DgRPC_BUILD_TESTS=OFF        -DBUILD_SHARED_LIBS=ON        -DgRPC_SSL_PROVIDER=package        -DOPENSSL_ROOT_DIR=/opt/openssl        -DgRPC_ABSL_PROVIDER=module        -DgRPC_RE2_PROVIDER=module        -DgRPC_CARES_PROVIDER=package        -DgRPC_ZLIB_PROVIDER=package        -DgRPC_PROTOBUF_PROVIDER=module   && make -j2   && make install   && ldconfig   && rm -rf /tmp/grpc
+#18 CACHED
+
+#19 [stage-1 10/15] COPY ./scripts /app/scripts
+#19 CACHED
+
+#20 [stage-1  5/15] COPY --from=builder /app/server/pqfl_server /app/pqfl_server
+#20 CACHED
+
+#21 [stage-1  2/15] RUN apt-get update && apt-get install -y       ca-certificates libc-ares-dev patchelf       && apt-get clean
+#21 CACHED
+
+#22 [builder  5/10] WORKDIR /app
+#22 CACHED
+
+#23 [stage-1 13/15] WORKDIR /app
+#23 CACHED
+
+#24 [builder 10/10] RUN make -j2 VERBOSE=1
+#24 CACHED
+
+#25 [stage-1  4/15] COPY --from=builder /usr/local /usr/local
+#25 CACHED
+
+#26 [builder  2/10] RUN apt-get update && apt-get install -y       git wget cmake ninja-build build-essential       python3-dev python3-pip libssl-dev libc-ares-dev zlib1g-dev protobuf-compiler       libffi-dev patchelf pkg-config       nlohmann-json3-dev       && apt-get clean
+#26 CACHED
+
+#27 [builder  7/10] COPY ./proto ./proto
+#27 CACHED
+
+#28 [stage-1 15/15] RUN mkdir -p /app/data /app/models
+#28 CACHED
+
+#29 exporting to image
+#29 exporting layers done
+#29 exporting manifest sha256:9deeaff3e3d9fe8879ef5017071767b3c375010b6059330130edaa177719f38a 0.0s done
+#29 exporting config sha256:935434f1f25b1b4d3f1854191905701d451e1dd854bcf97f911aeb3f06151a09 0.0s done
+#29 exporting attestation manifest sha256:26d3c22b25957b0a01ad89ee1ecea045ef17c173aeb0f29e4d9f7389e97c7bf5
+#29 exporting attestation manifest sha256:26d3c22b25957b0a01ad89ee1ecea045ef17c173aeb0f29e4d9f7389e97c7bf5 0.1s done
+#29 exporting manifest list sha256:50fb8f34d719b6648523476f9980a5ff700ff2e5f4c8348e1dd7fe438fcc9556 0.0s done
+#29 naming to docker.io/library/pqfl-server:latest done
+#29 unpacking to docker.io/library/pqfl-server:latest 0.0s done
+#29 DONE 0.3s

@@ -1,0 +1,4 @@
+# Enforce Unix-style line endings for all shell scripts to ensure
+# they are executable inside Linux-based Docker containers, regardless
+# of the host operating system.
+*.sh eol=lf

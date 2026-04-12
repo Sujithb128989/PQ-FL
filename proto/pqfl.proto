@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package pqfl;
+
+// Core FL service: client registration, training config, weight
+// submission, and global model streaming.
+
+service FederatedLearning {
+  // Register an edge client with the orchestration server.
+  rpc RegisterClient(ClientRegistration) returns (RegistrationResponse);
+
+  // Retrieve training hyperparameters from the server.
+  rpc GetTrainingConfig(ConfigRequest) returns (TrainingConfig);
+
+  // Submit encrypted local weight updates after on-device training.
+  rpc SubmitWeights(WeightPayload) returns (AggregationResponse);
+
+  // Stream global model updates to edge clients after each aggregation round.
+  rpc StreamGlobalModel(ModelRequest) returns (stream GlobalModelUpdate);
+}
+
+// --- Client Registration ---
+
+message ClientRegistration {
+  string client_id = 1;
+  int32 local_dataset_size = 2;   // Number of local training samples
+  string hardware_info = 3;       // e.g. "aarch64 / 4GB RAM"
+  string tenant_id = 4;           // Logical tenant / project namespace
+  string model_id = 5;            // Logical model within the tenant
+  string dataset_fingerprint = 6; // Optional dataset identity / shard hint
+}
+
+message RegistrationResponse {
+  bool accepted = 1;
+  string assigned_id = 2;
+  int32 current_round = 3;        // Latest completed aggregation round
+  int32 active_model_version = 4; // Latest active model version for this tenant/model
+}
+
+// --- Training Configuration ---
+
+message ConfigRequest {
+  string client_id = 1;
+  string tenant_id = 2;
+  string model_id = 3;
+}
+
+message TrainingConfig {
+  int32 target_rounds = 1;        // Total FL rounds to complete
+  float learning_rate = 2;
+  int32 batch_size = 3;
+  int32 required_clients = 4;     // Min clients per aggregation round
+  float clip_norm = 5;            // L2 gradient clipping bound
+  string aggregation_strategy = 6; // "fedavg" | "krum" | "trimmed_mean"
+  string tenant_id = 7;
+  string model_id = 8;
+  int32 active_model_version = 9;
+  int32 active_key_version = 10;
+  float server_momentum = 11;     // Server-side optimizer momentum
+  string job_id = 12;
+  string dataset_id = 13;
+  string dataset_fingerprint = 14;
+  int32 assigned_round_index = 15;
+  string assignment_id = 16;
+  string assignment_expires_at = 17;
+  int32 base_model_version = 18;
+  string job_status = 19;
+  bool assignment_ready = 20;
+  string assignment_message = 21;
+}
+
+// --- Weight Submission ---
+
+message WeightPayload {
+  string client_id = 1;
+  int32 round_index = 2;          // Which FL round this update belongs to
+  int32 local_dataset_size = 3;   // For weighted FedAvg
+  bytes encrypted_weights = 4;    // AES-256-GCM ciphertext
+  bytes iv = 5;                   // 12-byte initialization vector
+  bytes auth_tag = 6;             // 16-byte GCM authentication tag
+  string tenant_id = 7;
+  string model_id = 8;
+  int32 base_model_version = 9;   // Which global model version the client trained from
+  bytes client_nonce = 10;        // Optional per-request entropy to bind app-layer keys
+  string job_id = 11;
+  string assignment_id = 12;
+}
+
+message AggregationResponse {
+  bool accepted = 1;
+  string message = 2;
+  int32 clients_received = 3;     // How many clients have submitted this round
+  int32 clients_required = 4;     // How many are needed to trigger aggregation
+  bool aggregation_triggered = 5; // True if this submission triggered aggregation
+  int32 active_model_version = 6;
+  int32 active_key_version = 7;
+}
+
+// --- Global Model Streaming ---
+
+message ModelRequest {
+  string client_id = 1;
+  int32 last_received_round = 2;  // Client's latest round, server sends newer
+  string tenant_id = 3;
+  string model_id = 4;
+}
+
+message GlobalModelUpdate {
+  int32 round_index = 1;
+  bytes encrypted_weights = 2;    // AES-256-GCM ciphertext of aggregated model
+  bytes iv = 3;
+  bytes auth_tag = 4;
+  bytes server_signature = 5;     // ML-DSA-87 signature over (round_index || encrypted_weights)
+  string aggregation_method = 6;  // Which strategy produced this model
+  string tenant_id = 7;
+  string model_id = 8;
+  int32 model_version = 9;
+  int32 key_version = 10;
+  bytes server_nonce = 11;
+}
