@@ -35,3 +35,29 @@ services:
     environment:
       PQFL_ADDRESS: pqfl-server:50051
     command: ["/app/pqfl_worker_demo", "compose-worker-1", "compose-worker-1-trainer"]
+
+  pqfl-mnist-client:
+    image: pqfl-mnist-client:latest
+    container_name: pqfl-mnist-client
+    build:
+      context: .
+      dockerfile: Dockerfile.mnist-client
+    depends_on:
+      - pqfl-server
+    profiles: ["demo"]
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./data:/app/data:ro
+    command:
+      - "--certs"
+      - "/app/certs"
+      - "--payload-key"
+      - "/app/data/payload.key"
+      - "--client-id"
+      - "mnist-pqc-client-1"
+      - "--shard"
+      - "0"
+      - "--epochs"
+      - "1"
+      - "--data-dir"
+      - "/app/client/data"

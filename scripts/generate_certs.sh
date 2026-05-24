@@ -34,7 +34,7 @@ cat <<EOF > ${CERT_DIR}/san.cnf
 [req]
 distinguished_name=dn
 [san]
-subjectAltName=DNS:localhost,DNS:pqfl-server
+subjectAltName=DNS:localhost,DNS:pqfl-server,DNS:pqfl-oqs-proxy
 [dn]
 EOF
 
