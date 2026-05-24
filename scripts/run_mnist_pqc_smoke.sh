@@ -56,7 +56,7 @@ echo ""
 
 # Verify stunnel links to OQS-OpenSSL
 echo "Verifying stunnel OQS-OpenSSL linkage..."
-docker run --rm "${CLIENT_IMAGE_NAME}" sh -c "stunnel -version 2>&1 | head -5"
+docker run --rm --entrypoint sh "${CLIENT_IMAGE_NAME}" -c "stunnel -version 2>&1 | head -5"
 echo ""
 
 # Step 5: Start PQ-FL server
