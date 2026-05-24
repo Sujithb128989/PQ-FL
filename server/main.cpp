@@ -2,6 +2,7 @@
 // Bootstraps crypto, state, and the gRPC services.
 
 #include <iostream>
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -95,7 +96,7 @@ void RunServer(const std::string& cert_dir) {
     HealthServiceImpl health_service;
     FederatedServiceImpl fl_service(*crypto, *state_store, cert_dir + "/server.key");
     AdminServiceImpl admin_service(*state_store, *crypto, fl_service.GetWeightBuffer());
-    WorkerServiceImpl worker_service(*state_store, fl_service.GetClientRegistry());
+    WorkerServiceImpl worker_service(*state_store, fl_service.GetClientRegistry(), *crypto);
 
     // Configure mTLS with PQ certificates
     grpc::SslServerCredentialsOptions ssl_opts;
@@ -132,9 +133,10 @@ void RunServer(const std::string& cert_dir) {
                  ", δ=" + std::to_string(config.dp_delta) + ")");
     Logger::Info("Gradient clip norm: " + std::to_string(config.clip_norm));
 
+    fl_service.StartRpcs();
+
     // Spawn async handler threads
-    unsigned int num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) num_threads = 4;
+    unsigned int num_threads = std::max(2u, std::thread::hardware_concurrency());
 
     std::vector<std::thread> cq_threads;
     for (unsigned int i = 0; i < num_threads; ++i) {

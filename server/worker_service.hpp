@@ -3,13 +3,15 @@
 
 #include <grpcpp/grpcpp.h>
 #include "worker.grpc.pb.h"
+#include "crypto_engine.hpp"
 #include "federated_service.hpp"
 #include "state_store.hpp"
 
 class WorkerServiceImpl final : public pqfl::WorkerCoordinator::Service {
 public:
     WorkerServiceImpl(StateStore& state_store,
-                      ClientRegistry& registry);
+                      ClientRegistry& registry,
+                      CryptoEngine& crypto);
 
     grpc::Status RegisterWorker(grpc::ServerContext* context,
                                 const pqfl::WorkerRegistration* request,
@@ -27,6 +29,7 @@ public:
 private:
     StateStore& state_store_;
     ClientRegistry& registry_;
+    CryptoEngine& crypto_;
 };
 
 #endif // WORKER_SERVICE_HPP

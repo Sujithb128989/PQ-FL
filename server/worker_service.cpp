@@ -36,9 +36,11 @@ bool IsAllowedTaskStatus(const std::string& status) {
 } // namespace
 
 WorkerServiceImpl::WorkerServiceImpl(StateStore& state_store,
-                                     ClientRegistry& registry)
+                                     ClientRegistry& registry,
+                                     CryptoEngine& crypto)
     : state_store_(state_store),
-      registry_(registry) {}
+      registry_(registry),
+      crypto_(crypto) {}
 
 grpc::Status WorkerServiceImpl::RegisterWorker(grpc::ServerContext* context,
                                                const pqfl::WorkerRegistration* request,
@@ -203,6 +205,9 @@ grpc::Status WorkerServiceImpl::LeaseTrainingTask(grpc::ServerContext* context,
     response->set_clip_norm(cfg.clip_norm);
     response->set_server_momentum(cfg.server_momentum);
     response->set_assignment_expires_at(assignment.expires_at);
+    std::vector<unsigned char> kem_public_key = crypto_.GetKemPublicKey();
+    response->set_payload_kem_public_key(std::string(kem_public_key.begin(), kem_public_key.end()));
+    response->set_payload_kem_algorithm(crypto_.GetKemAlgorithm());
     return grpc::Status::OK;
 }
 

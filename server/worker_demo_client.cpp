@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <cstdlib>
@@ -180,14 +181,22 @@ private:
             return true;
         }
 
+        std::vector<unsigned char> stream_public_key;
+        std::vector<unsigned char> stream_secret_key;
+        if (!CryptoEngine::GenerateKemKeypair(stream_public_key, stream_secret_key)) {
+            std::cout << "[" << worker_id_ << "] Failed to generate ML-KEM-1024 stream keypair" << std::endl;
+            return false;
+        }
+
         pqfl::ModelRequest req;
         req.set_client_id(trainer_client_id_);
-        req.set_last_received_round(0);
+        req.set_last_received_round(std::max(0, task.round_index() - 2));
         req.set_tenant_id(kTenantId);
         req.set_model_id(kModelId);
+        req.set_client_kem_public_key(std::string(stream_public_key.begin(), stream_public_key.end()));
 
         grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
         auto reader = fl_stub_->StreamGlobalModel(&ctx, req);
 
         pqfl::GlobalModelUpdate update;
@@ -198,9 +207,27 @@ private:
             return false;
         }
 
-        std::vector<unsigned char> session_key = CryptoEngine::DeriveSessionKeyWithSecret(
-            payload_secret_,
-            {kWorkerCertIdentity, kTenantId, kModelId, trainer_client_id_, "stream"});
+        std::vector<unsigned char> session_key;
+        if (update.key_agreement() == "ml-kem-1024") {
+            std::vector<unsigned char> kem_ciphertext(update.kem_ciphertext().begin(),
+                                                      update.kem_ciphertext().end());
+            std::vector<unsigned char> shared_secret;
+            if (!CryptoEngine::DecapsulateKem(stream_secret_key, kem_ciphertext, shared_secret)) {
+                std::cout << "[" << worker_id_ << "] ML-KEM-1024 stream decapsulation failed" << std::endl;
+                reader->Finish();
+                return false;
+            }
+            session_key = CryptoEngine::DeriveSessionKeyFromKemSecret(
+                shared_secret,
+                {kWorkerCertIdentity, kTenantId, kModelId, trainer_client_id_, "stream"});
+            std::cout << "[" << worker_id_ << "] ML-KEM-1024 stream decapsulation succeeded, ciphertext_bytes="
+                      << kem_ciphertext.size() << std::endl;
+        } else {
+            session_key = CryptoEngine::DeriveSessionKeyWithSecret(
+                payload_secret_,
+                {kWorkerCertIdentity, kTenantId, kModelId, trainer_client_id_, "stream"});
+            std::cout << "[" << worker_id_ << "] StreamGlobalModel used shared-secret key agreement" << std::endl;
+        }
         std::vector<unsigned char> iv(update.iv().begin(), update.iv().end());
         std::vector<unsigned char> tag(update.auth_tag().begin(), update.auth_tag().end());
         std::string plaintext = CryptoEngine::DecryptWithKey(
@@ -234,6 +261,9 @@ private:
             std::memcpy(weights.data(), plaintext.data(), plaintext.size());
         }
         *weights_out = std::move(weights);
+        std::cout << "[" << worker_id_ << "] Fetched base model round "
+                  << update.round_index() << " via StreamGlobalModel RPC, key_agreement="
+                  << update.key_agreement() << std::endl;
         return true;
     }
 
@@ -277,15 +307,35 @@ private:
         req.set_assignment_id(task.assignment_id());
         req.set_client_nonce("worker-demo-" + worker_id_ + "-round-" + std::to_string(task.round_index()));
 
-        std::vector<unsigned char> session_key = CryptoEngine::DeriveSessionKeyWithSecret(
-            payload_secret_,
-            {kWorkerCertIdentity,
-             kTenantId,
-             kModelId,
-             trainer_client_id_,
-             std::to_string(req.round_index()),
-             "submit",
-             req.client_nonce()});
+        std::vector<std::string> context = {
+            kWorkerCertIdentity,
+            kTenantId,
+            kModelId,
+            trainer_client_id_,
+            std::to_string(req.round_index()),
+            "submit",
+            req.client_nonce()
+        };
+        std::vector<unsigned char> session_key;
+        if (!task.payload_kem_public_key().empty()) {
+            std::vector<unsigned char> public_key(task.payload_kem_public_key().begin(),
+                                                  task.payload_kem_public_key().end());
+            std::vector<unsigned char> kem_ciphertext;
+            std::vector<unsigned char> shared_secret;
+            if (!CryptoEngine::EncapsulateKem(public_key, kem_ciphertext, shared_secret)) {
+                std::cout << "[" << worker_id_ << "] ML-KEM-1024 encapsulation failed" << std::endl;
+                return false;
+            }
+            req.set_kem_ciphertext(std::string(kem_ciphertext.begin(), kem_ciphertext.end()));
+            req.set_key_agreement("ml-kem-1024");
+            session_key = CryptoEngine::DeriveSessionKeyFromKemSecret(shared_secret, context);
+            std::cout << "[" << worker_id_ << "] ML-KEM-1024 encapsulated payload key, ciphertext_bytes="
+                      << kem_ciphertext.size() << std::endl;
+        } else {
+            req.set_key_agreement("shared-secret");
+            session_key = CryptoEngine::DeriveSessionKeyWithSecret(payload_secret_, context);
+            std::cout << "[" << worker_id_ << "] Using shared-secret payload key" << std::endl;
+        }
         std::string plaintext(reinterpret_cast<const char*>(weights.data()), weights.size() * sizeof(float));
         std::vector<unsigned char> iv;
         std::vector<unsigned char> tag;

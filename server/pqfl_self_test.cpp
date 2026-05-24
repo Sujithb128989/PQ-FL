@@ -42,6 +42,19 @@ void TestSessionKeyDerivationUsesSecret() {
     Assert(key_a1 != key_context_changed, "different contexts must derive different keys");
 }
 
+void TestKemSessionKeyAgreement(const std::filesystem::path& temp_root) {
+    CryptoEngine crypto((temp_root / "master.key").string());
+    std::vector<unsigned char> kem_ciphertext;
+    std::vector<unsigned char> shared_secret;
+    Assert(CryptoEngine::EncapsulateKem(crypto.GetKemPublicKey(), kem_ciphertext, shared_secret),
+           "ML-KEM-1024 encapsulation should succeed");
+
+    std::vector<std::string> context = {"pqfl-worker", "tenant-a", "model-a", "client-1", "1", "submit"};
+    auto client_key = CryptoEngine::DeriveSessionKeyFromKemSecret(shared_secret, context);
+    auto server_key = crypto.DeriveKemSessionKey(context, kem_ciphertext);
+    Assert(client_key == server_key, "ML-KEM-1024 client and server keys should match");
+}
+
 void TestStateStoreLifecycle(const std::filesystem::path& temp_root) {
     StateStore store((temp_root / "state.json").string());
     store.Load();
@@ -149,6 +162,7 @@ int main() {
     try {
         TestCryptoRotation(temp_root / "crypto");
         TestSessionKeyDerivationUsesSecret();
+        TestKemSessionKeyAgreement(temp_root / "kem");
         TestStateStoreLifecycle(temp_root / "state");
         std::cout << "pqfl_self_test: PASS" << std::endl;
     } catch (const std::exception& e) {

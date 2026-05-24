@@ -194,9 +194,11 @@ void WeightBuffer::ApplyDifferentialPrivacy(std::vector<float>& weights,
     for (float& value : weights) {
         value += noise(gen);
     }
+    ClipWeights(weights, clip_norm);
 
     Logger::Info("Applied DP noise (sigma=" + std::to_string(sigma) +
-                 ", epsilon=" + std::to_string(epsilon) + ")");
+                 ", epsilon=" + std::to_string(epsilon) +
+                 ", post_noise_clip_norm=" + std::to_string(clip_norm) + ")");
 }
 
 bool WeightBuffer::ValidateWeights(
@@ -647,23 +649,25 @@ void FederatedServiceImpl::Run(grpc::ServerBuilder& builder) {
     cq_ = builder.AddCompletionQueue();
 }
 
-void FederatedServiceImpl::HandleRpcs() {
+void FederatedServiceImpl::StartRpcs() {
     auto signer = [this](const std::string& payload) { return SignData(payload); };
 
     new RegisterClientCall(&service_, cq_.get(), registry_, state_store_, buffer_);
     new GetTrainingConfigCall(&service_, cq_.get(), crypto_, registry_, state_store_);
     new SubmitWeightsCall(&service_, cq_.get(), crypto_, registry_, state_store_, buffer_);
     new StreamGlobalModelCall(&service_, cq_.get(), crypto_, registry_, state_store_, buffer_, signer);
+}
 
+void FederatedServiceImpl::HandleRpcs() {
     void* tag = nullptr;
     bool ok = false;
     while (cq_->Next(&tag, &ok)) {
-        CallData* call = static_cast<CallData*>(tag);
-        if (ok) {
-            call->Proceed();
-        } else {
-            delete call;
-        }
+        auto* event_tag = static_cast<CallData::Tag*>(tag);
+        CallData* call = event_tag->call;
+        CallData::Event event = event_tag->event;
+        delete event_tag;
+        std::lock_guard<std::mutex> lock(proceed_mutex_);
+        call->Proceed(ok, event);
     }
 }
 
@@ -680,13 +684,18 @@ FederatedServiceImpl::RegisterClientCall::RegisterClientCall(
       registry_(registry),
       state_store_(state_store),
       buffer_(buffer) {
-    Proceed();
+    Proceed(true, Event::START);
 }
 
-void FederatedServiceImpl::RegisterClientCall::Proceed() {
+void FederatedServiceImpl::RegisterClientCall::Proceed(bool ok, Event event) {
+    if (event == Event::FINISH || !ok) {
+        delete this;
+        return;
+    }
+
     if (status_ == CREATE) {
         status_ = PROCESS;
-        service_->RequestRegisterClient(&ctx_, &request_, &responder_, cq_, cq_, this);
+        service_->RequestRegisterClient(&ctx_, &request_, &responder_, cq_, cq_, MakeTag(Event::REQUEST));
         return;
     }
 
@@ -704,7 +713,7 @@ void FederatedServiceImpl::RegisterClientCall::Proceed() {
             response_.set_active_model_version(0);
             Logger::Warn("Rejected RegisterClient request: " + validation_error, "Federated");
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -718,7 +727,7 @@ void FederatedServiceImpl::RegisterClientCall::Proceed() {
             responder_.Finish(response_,
                               grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                                            "Authenticated client certificate required"),
-                              this);
+                              MakeTag(Event::FINISH));
             return;
         }
 
@@ -733,7 +742,7 @@ void FederatedServiceImpl::RegisterClientCall::Proceed() {
             responder_.Finish(response_,
                               grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                                            "Peer identity is required"),
-                              this);
+                              MakeTag(Event::FINISH));
             return;
         }
 
@@ -776,7 +785,7 @@ void FederatedServiceImpl::RegisterClientCall::Proceed() {
         });
 
         status_ = FINISH;
-        responder_.Finish(response_, grpc::Status::OK, this);
+        responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
         return;
     }
 
@@ -796,13 +805,18 @@ FederatedServiceImpl::GetTrainingConfigCall::GetTrainingConfigCall(
       crypto_(crypto),
       registry_(registry),
       state_store_(state_store) {
-    Proceed();
+    Proceed(true, Event::START);
 }
 
-void FederatedServiceImpl::GetTrainingConfigCall::Proceed() {
+void FederatedServiceImpl::GetTrainingConfigCall::Proceed(bool ok, Event event) {
+    if (event == Event::FINISH || !ok) {
+        delete this;
+        return;
+    }
+
     if (status_ == CREATE) {
         status_ = PROCESS;
-        service_->RequestGetTrainingConfig(&ctx_, &request_, &responder_, cq_, cq_, this);
+        service_->RequestGetTrainingConfig(&ctx_, &request_, &responder_, cq_, cq_, MakeTag(Event::REQUEST));
         return;
     }
 
@@ -820,7 +834,7 @@ void FederatedServiceImpl::GetTrainingConfigCall::Proceed() {
             status_ = FINISH;
             responder_.Finish(response_,
                               grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, validation_error),
-                              this);
+                              MakeTag(Event::FINISH));
             return;
         }
 
@@ -830,7 +844,7 @@ void FederatedServiceImpl::GetTrainingConfigCall::Proceed() {
             responder_.Finish(response_,
                               grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                                            "Authenticated client certificate required"),
-                              this);
+                              MakeTag(Event::FINISH));
             return;
         }
 
@@ -840,7 +854,7 @@ void FederatedServiceImpl::GetTrainingConfigCall::Proceed() {
             responder_.Finish(response_,
                               grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
                                            "Client must register with the same certificate identity before requesting config"),
-                              this);
+                              MakeTag(Event::FINISH));
             return;
         }
 
@@ -858,6 +872,10 @@ void FederatedServiceImpl::GetTrainingConfigCall::Proceed() {
         response_.set_server_momentum(cfg.server_momentum);
         response_.set_assignment_ready(false);
         response_.set_assignment_message("No active scheduled training job; ad-hoc participation only");
+        std::vector<unsigned char> kem_public_key = crypto_.GetKemPublicKey();
+        response_.set_payload_kem_public_key(
+            std::string(kem_public_key.begin(), kem_public_key.end()));
+        response_.set_payload_kem_algorithm(crypto_.GetKemAlgorithm());
 
         PersistedAssignmentLease assignment;
         PersistedTrainingJobRecord job;
@@ -888,7 +906,7 @@ void FederatedServiceImpl::GetTrainingConfigCall::Proceed() {
         }
 
         status_ = FINISH;
-        responder_.Finish(response_, grpc::Status::OK, this);
+        responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
         return;
     }
 
@@ -907,6 +925,17 @@ std::vector<unsigned char> FederatedServiceImpl::SubmitWeightsCall::DeriveSessio
     if (!request_.client_nonce().empty()) {
         context_parts.push_back(request_.client_nonce());
     }
+    if (!request_.kem_ciphertext().empty()) {
+        std::vector<unsigned char> kem_ciphertext(
+            request_.kem_ciphertext().begin(),
+            request_.kem_ciphertext().end());
+        Logger::Info("SubmitWeights deriving AES-256-GCM payload key via ML-KEM-1024 for client " +
+                     request_.client_id() +
+                     ", ciphertext_bytes=" + std::to_string(kem_ciphertext.size()));
+        return crypto_.DeriveKemSessionKey(context_parts, kem_ciphertext);
+    }
+    Logger::Info("SubmitWeights deriving AES-256-GCM payload key via shared secret for client " +
+                 request_.client_id());
     return crypto_.DeriveSessionKey(context_parts);
 }
 
@@ -925,13 +954,18 @@ FederatedServiceImpl::SubmitWeightsCall::SubmitWeightsCall(
       registry_(registry),
       state_store_(state_store),
       buffer_(buffer) {
-    Proceed();
+    Proceed(true, Event::START);
 }
 
-void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
+void FederatedServiceImpl::SubmitWeightsCall::Proceed(bool ok, Event event) {
+    if (event == Event::FINISH || !ok) {
+        delete this;
+        return;
+    }
+
     if (status_ == CREATE) {
         status_ = PROCESS;
-        service_->RequestSubmitWeights(&ctx_, &request_, &responder_, cq_, cq_, this);
+        service_->RequestSubmitWeights(&ctx_, &request_, &responder_, cq_, cq_, MakeTag(Event::REQUEST));
         return;
     }
 
@@ -949,7 +983,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message(validation_error);
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
         if (request_.round_index() <= 0) {
@@ -957,7 +991,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("round_index must be >= 1");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
         if (request_.local_dataset_size() <= 0) {
@@ -965,7 +999,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("local_dataset_size must be >= 1");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
         if (request_.encrypted_weights().empty()) {
@@ -973,7 +1007,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("encrypted_weights must not be empty");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
         if (request_.iv().size() != 12 || request_.auth_tag().size() != 16) {
@@ -981,7 +1015,15 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("iv/auth_tag length mismatch");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
+            return;
+        }
+        if (request_.key_agreement() == "ml-kem-1024" && request_.kem_ciphertext().empty()) {
+            response_.set_accepted(false);
+            response_.set_message("ML-KEM-1024 key agreement requires kem_ciphertext");
+            response_.set_active_key_version(crypto_.GetActiveKeyVersion());
+            status_ = FINISH;
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -990,7 +1032,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("Authenticated client certificate required");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -1000,7 +1042,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("Client must register with the same certificate identity before submitting weights");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -1013,7 +1055,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             response_.set_active_model_version(current_model_version);
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -1035,7 +1077,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
                 response_.set_active_key_version(crypto_.GetActiveKeyVersion());
                 response_.set_active_model_version(current_model_version);
                 status_ = FINISH;
-                responder_.Finish(response_, grpc::Status::OK, this);
+                responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
                 return;
             }
         }
@@ -1046,7 +1088,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             response_.set_active_model_version(current_model_version);
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
         if (buffer_.HasClientSubmission(tenant_id, model_id, request_.round_index(), request_.client_id())) {
@@ -1055,16 +1097,16 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             response_.set_active_model_version(current_model_version);
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
-        std::vector<unsigned char> session_key = DeriveSessionKey();
         std::vector<unsigned char> iv(request_.iv().begin(), request_.iv().end());
         std::vector<unsigned char> tag(request_.auth_tag().begin(), request_.auth_tag().end());
 
         std::string plaintext;
         try {
+            std::vector<unsigned char> session_key = DeriveSessionKey();
             plaintext = CryptoEngine::DecryptWithKey(session_key.data(),
                                                      request_.encrypted_weights(),
                                                      iv,
@@ -1074,7 +1116,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("Decryption failed: " + std::string(e.what()));
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -1083,7 +1125,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_message("Invalid weight dimensions");
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -1129,7 +1171,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
             response_.set_active_key_version(crypto_.GetActiveKeyVersion());
             response_.set_message(aggregation_result.message);
             status_ = FINISH;
-            responder_.Finish(response_, grpc::Status::OK, this);
+            responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
             return;
         }
 
@@ -1152,8 +1194,17 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
                 response_.set_active_key_version(crypto_.GetActiveKeyVersion());
                 response_.set_message(assignment_error);
                 status_ = FINISH;
-                responder_.Finish(response_, grpc::Status::OK, this);
+                responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
                 return;
+            }
+
+            if (aggregation_result.aggregated) {
+                state_store_.AdvanceTrainingJobRound(
+                    tenant_id,
+                    model_id,
+                    request_.round_index(),
+                    aggregation_result.model_version
+                );
             }
         }
 
@@ -1166,7 +1217,7 @@ void FederatedServiceImpl::SubmitWeightsCall::Proceed() {
         response_.set_message(aggregation_result.message);
 
         status_ = FINISH;
-        responder_.Finish(response_, grpc::Status::OK, this);
+        responder_.Finish(response_, grpc::Status::OK, MakeTag(Event::FINISH));
         return;
     }
 
@@ -1200,13 +1251,55 @@ FederatedServiceImpl::StreamGlobalModelCall::StreamGlobalModelCall(
       state_store_(state_store),
       buffer_(buffer),
       signer_(signer) {
-    Proceed();
+    Proceed(true, Event::START);
 }
 
-void FederatedServiceImpl::StreamGlobalModelCall::Proceed() {
+void FederatedServiceImpl::StreamGlobalModelCall::Proceed(bool ok, Event event) {
+    if (event == Event::FINISH) {
+        finish_in_flight_ = false;
+        if (MaybeDeleteAfterTerminalEvent()) {
+            return;
+        }
+        return;
+    }
+    if (event == Event::DONE) {
+        done_notify_in_flight_ = false;
+        done_received_ = true;
+        Logger::Info("StreamGlobalModel cancellation/done notification for client " +
+                     request_.client_id());
+        if (alarm_in_flight_) {
+            alarm_.Cancel();
+        }
+        MaybeDeleteAfterTerminalEvent();
+        return;
+    }
+    if (event == Event::WRITE) {
+        write_in_flight_ = false;
+        if (!ok || done_received_) {
+            Logger::Info("StreamGlobalModel write completed after stream ended for client " +
+                         request_.client_id());
+            MaybeDeleteAfterTerminalEvent();
+            return;
+        }
+    }
+    if (event == Event::ALARM) {
+        alarm_in_flight_ = false;
+        if (!ok || done_received_) {
+            Logger::Info("StreamGlobalModel alarm completed after stream ended for client " +
+                         request_.client_id());
+            MaybeDeleteAfterTerminalEvent();
+            return;
+        }
+    }
+    if (!ok) {
+        delete this;
+        return;
+    }
+
     if (status_ == CREATE) {
         status_ = PROCESS;
-        service_->RequestStreamGlobalModel(&ctx_, &request_, &responder_, cq_, cq_, this);
+        RequestDoneNotification();
+        service_->RequestStreamGlobalModel(&ctx_, &request_, &responder_, cq_, cq_, MakeTag(Event::REQUEST));
         return;
     }
 
@@ -1215,63 +1308,102 @@ void FederatedServiceImpl::StreamGlobalModelCall::Proceed() {
         std::string model_id = NormalizeModel(request_.model_id());
 
         if (status_ == PROCESS) {
+            Logger::Info("Accepted StreamGlobalModel request for client " + request_.client_id() +
+                         ", tenant " + tenant_id +
+                         ", model " + model_id +
+                         ", last_received_round=" + std::to_string(request_.last_received_round()));
             new StreamGlobalModelCall(service_, cq_, crypto_, registry_, state_store_, buffer_, signer_);
+            Logger::Info("Spawned next StreamGlobalModel listener");
 
             std::string validation_error = ValidateFederatedRequestIds(
                 request_.tenant_id(),
                 request_.model_id(),
                 request_.client_id());
             if (!validation_error.empty()) {
-                status_ = FINISH;
-                responder_.Finish(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, validation_error),
-                                  this);
+                FinishWithStatus(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, validation_error));
                 return;
             }
 
             if (!IsPeerAuthenticated(&ctx_)) {
-                status_ = FINISH;
-                responder_.Finish(grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
-                                               "Authenticated client certificate required"),
-                                  this);
+                FinishWithStatus(grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                                               "Authenticated client certificate required"));
                 return;
             }
 
             std::string peer_identity = NormalizePeerIdentity(GetPeerIdentity(&ctx_));
+            Logger::Info("StreamGlobalModel peer identity " + peer_identity);
             if (!registry_.IsRegisteredForPeer(tenant_id, model_id, request_.client_id(), peer_identity)) {
-                status_ = FINISH;
-                responder_.Finish(grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
-                                               "Client must register with the same certificate identity before streaming models"),
-                                  this);
+                FinishWithStatus(grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                                               "Client must register with the same certificate identity before streaming models"));
                 return;
             }
 
             status_ = STREAM;
+            Logger::Info("StreamGlobalModel request passed validation");
         }
 
         auto latest = buffer_.GetLatestGlobalModel(tenant_id, model_id);
-        if (latest.round == -1 || latest.weights.empty() || latest.round == last_sent_round_) {
+        Logger::Info("Latest global model lookup for stream returned round " +
+                     std::to_string(latest.round));
+        if (latest.round == -1 ||
+            latest.weights.empty() ||
+            latest.round == last_sent_round_ ||
+            latest.round <= request_.last_received_round()) {
+            if (done_received_) {
+                MaybeDeleteAfterTerminalEvent();
+                return;
+            }
+            alarm_in_flight_ = true;
             alarm_.Set(cq_,
                        gpr_time_add(gpr_now(GPR_CLOCK_MONOTONIC),
                                     gpr_time_from_seconds(1, GPR_TIMESPAN)),
-                       this);
+                       MakeTag(Event::ALARM));
             return;
         }
 
         last_sent_round_ = latest.round;
+        Logger::Info("Streaming global model round " + std::to_string(latest.round) +
+                     " to client " + request_.client_id());
         std::string plaintext(reinterpret_cast<const char*>(latest.weights.data()),
                               latest.weights.size() * sizeof(float));
 
-        std::vector<unsigned char> session_key = DeriveSessionKey();
+        std::vector<unsigned char> kem_ciphertext;
+        std::string key_agreement = "shared-secret";
+        std::vector<unsigned char> session_key;
+        if (!request_.client_kem_public_key().empty()) {
+            std::vector<unsigned char> client_public_key(
+                request_.client_kem_public_key().begin(),
+                request_.client_kem_public_key().end());
+            std::vector<unsigned char> shared_secret;
+            if (!CryptoEngine::EncapsulateKem(client_public_key, kem_ciphertext, shared_secret)) {
+                FinishWithStatus(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                                               "Invalid ML-KEM-1024 client public key"));
+                return;
+            }
+            session_key = CryptoEngine::DeriveSessionKeyFromKemSecret(shared_secret, {
+                GetPeerIdentity(&ctx_),
+                NormalizeTenant(request_.tenant_id()),
+                NormalizeModel(request_.model_id()),
+                request_.client_id(),
+                "stream"
+            });
+            key_agreement = "ml-kem-1024";
+            Logger::Info("StreamGlobalModel ML-KEM-1024 encapsulation complete for client " +
+                         request_.client_id() +
+                         ", ciphertext_bytes=" + std::to_string(kem_ciphertext.size()));
+        } else {
+            session_key = DeriveSessionKey();
+            Logger::Info("StreamGlobalModel using shared-secret stream key for client " +
+                         request_.client_id());
+        }
         std::vector<unsigned char> iv_out;
         std::vector<unsigned char> tag_out;
         std::string ciphertext;
         try {
             ciphertext = CryptoEngine::EncryptWithKey(session_key.data(), plaintext, iv_out, tag_out);
         } catch (const std::exception&) {
-            status_ = FINISH;
-            responder_.Finish(grpc::Status(grpc::StatusCode::INTERNAL,
-                                           "Failed to encrypt global model"),
-                              this);
+            FinishWithStatus(grpc::Status(grpc::StatusCode::INTERNAL,
+                                           "Failed to encrypt global model"));
             return;
         }
 
@@ -1281,24 +1413,53 @@ void FederatedServiceImpl::StreamGlobalModelCall::Proceed() {
                               std::to_string(latest.round) + "|" +
                               std::to_string(latest.model_version) + "|" +
                               ciphertext;
+        Logger::Info("Signing streamed global model round " + std::to_string(latest.round));
         std::vector<unsigned char> sig = signer_(to_sign);
+        Logger::Info("Writing streamed global model round " + std::to_string(latest.round));
 
-        pqfl::GlobalModelUpdate update;
-        update.set_round_index(latest.round);
-        update.set_encrypted_weights(ciphertext);
-        update.set_iv(std::string(iv_out.begin(), iv_out.end()));
-        update.set_auth_tag(std::string(tag_out.begin(), tag_out.end()));
-        update.set_server_signature(std::string(sig.begin(), sig.end()));
-        update.set_aggregation_method(Config::Instance().Get().aggregation_strategy);
-        update.set_tenant_id(tenant_id);
-        update.set_model_id(model_id);
-        update.set_model_version(latest.model_version);
-        update.set_key_version(crypto_.GetActiveKeyVersion());
-        update.set_server_nonce(server_nonce);
+        pending_update_.Clear();
+        pending_update_.set_round_index(latest.round);
+        pending_update_.set_encrypted_weights(ciphertext);
+        pending_update_.set_iv(std::string(iv_out.begin(), iv_out.end()));
+        pending_update_.set_auth_tag(std::string(tag_out.begin(), tag_out.end()));
+        pending_update_.set_server_signature(std::string(sig.begin(), sig.end()));
+        pending_update_.set_aggregation_method(Config::Instance().Get().aggregation_strategy);
+        pending_update_.set_tenant_id(tenant_id);
+        pending_update_.set_model_id(model_id);
+        pending_update_.set_model_version(latest.model_version);
+        pending_update_.set_key_version(crypto_.GetActiveKeyVersion());
+        pending_update_.set_server_nonce(server_nonce);
+        pending_update_.set_kem_ciphertext(std::string(kem_ciphertext.begin(), kem_ciphertext.end()));
+        pending_update_.set_key_agreement(key_agreement);
 
-        responder_.Write(update, this);
+        write_in_flight_ = true;
+        responder_.Write(pending_update_, MakeTag(Event::WRITE));
         return;
     }
 
     delete this;
+}
+
+void FederatedServiceImpl::StreamGlobalModelCall::FinishWithStatus(const grpc::Status& status) {
+    status_ = FINISH;
+    finish_in_flight_ = true;
+    responder_.Finish(status, MakeTag(Event::FINISH));
+}
+
+void FederatedServiceImpl::StreamGlobalModelCall::RequestDoneNotification() {
+    if (!done_notify_in_flight_) {
+        done_notify_in_flight_ = true;
+        ctx_.AsyncNotifyWhenDone(MakeTag(Event::DONE));
+    }
+}
+
+bool FederatedServiceImpl::StreamGlobalModelCall::MaybeDeleteAfterTerminalEvent() {
+    if (write_in_flight_ || alarm_in_flight_ || finish_in_flight_ || done_notify_in_flight_) {
+        return false;
+    }
+    if (done_received_ || status_ == FINISH) {
+        delete this;
+        return true;
+    }
+    return false;
 }

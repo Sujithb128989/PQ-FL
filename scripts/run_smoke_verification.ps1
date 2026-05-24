@@ -34,11 +34,11 @@ docker run -d --name $containerName `
 try {
     Start-Sleep -Seconds 5
     docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" $imageName /app/pqfl_admin_demo
-    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" $imageName /app/pqfl_worker_demo demo-worker-1 demo-worker-1-trainer
-    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" $imageName /app/pqfl_worker_demo demo-worker-2 demo-worker-2-trainer
-    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" $imageName /app/pqfl_worker_demo demo-worker-1 demo-worker-1-trainer
-    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" $imageName /app/pqfl_worker_demo demo-worker-2 demo-worker-2-trainer
-    $statusOutput = docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" $imageName /app/pqfl_admin_cli status
+    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" -v "${modelsDir}:/app/models:ro" $imageName /app/pqfl_worker_demo demo-worker-1 demo-worker-1-trainer
+    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" -v "${modelsDir}:/app/models:ro" $imageName /app/pqfl_worker_demo demo-worker-2 demo-worker-2-trainer
+    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" -v "${modelsDir}:/app/models:ro" $imageName /app/pqfl_worker_demo demo-worker-1 demo-worker-1-trainer
+    docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" -v "${modelsDir}:/app/models:ro" $imageName /app/pqfl_worker_demo demo-worker-2 demo-worker-2-trainer
+    $statusOutput = (docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" $imageName /app/pqfl_admin_cli status) -join "`n"
     Write-Host $statusOutput
     if ($statusOutput -notmatch "(?m)^registered_clients=2$") {
         throw "Expected registered_clients=2"
@@ -75,7 +75,24 @@ try {
         throw "Second encrypted checkpoint was not written"
     }
 
+    $streamOutput = (docker run --rm --network "container:$containerName" -v "${certDir}:/app/certs:ro" -v "${dataDir}:/app/data:ro" $imageName /app/pqfl_test_client --stream-tests) -join "`n"
+    Write-Host $streamOutput
+    if ($LASTEXITCODE -ne 0) {
+        throw "StreamGlobalModel async CQ tests failed"
+    }
+    if ($streamOutput -notmatch "(?m)^\[StreamTest\] async_cq_stream_tests=PASS$") {
+        throw "StreamGlobalModel async CQ tests did not report PASS"
+    }
+
     Write-Host "Smoke verification passed."
+}
+catch {
+    try {
+        Write-Host "---- pqfl-smoke-server logs ----"
+        docker logs --tail 200 $containerName
+    } catch {
+    }
+    throw
 }
 finally {
     try {

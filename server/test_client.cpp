@@ -1,9 +1,11 @@
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <grpcpp/grpcpp.h>
 #include <openssl/evp.h>
@@ -146,15 +148,34 @@ public:
         req.set_assignment_id(config.assignment_id());
         req.set_client_nonce("nonce-" + cid + "-round-" + std::to_string(req.round_index()));
 
-        std::vector<unsigned char> session_key = CryptoEngine::DeriveSessionKeyWithSecret(
-            payload_secret_,
-            {kTestCertIdentity,
-             kTenantId,
-             kModelId,
-             cid,
-             std::to_string(req.round_index()),
-             "submit",
-             req.client_nonce()});
+        std::vector<std::string> key_context = {
+            kTestCertIdentity,
+            kTenantId,
+            kModelId,
+            cid,
+            std::to_string(req.round_index()),
+            "submit",
+            req.client_nonce()
+        };
+        std::vector<unsigned char> session_key;
+        if (!config.payload_kem_public_key().empty()) {
+            std::vector<unsigned char> public_key(config.payload_kem_public_key().begin(),
+                                                  config.payload_kem_public_key().end());
+            std::vector<unsigned char> kem_ciphertext;
+            std::vector<unsigned char> shared_secret;
+            if (!CryptoEngine::EncapsulateKem(public_key, kem_ciphertext, shared_secret)) {
+                std::cout << "[Node " << cid << "] ML-KEM-1024 encapsulation failed" << std::endl;
+                return;
+            }
+            req.set_kem_ciphertext(std::string(kem_ciphertext.begin(), kem_ciphertext.end()));
+            req.set_key_agreement("ml-kem-1024");
+            session_key = CryptoEngine::DeriveSessionKeyFromKemSecret(shared_secret, key_context);
+            std::cout << "[Node " << cid << "] ML-KEM-1024 payload key encapsulated, ciphertext_bytes="
+                      << kem_ciphertext.size() << std::endl;
+        } else {
+            req.set_key_agreement("shared-secret");
+            session_key = CryptoEngine::DeriveSessionKeyWithSecret(payload_secret_, key_context);
+        }
         std::string plaintext(reinterpret_cast<const char*>(weights.data()),
                               weights.size() * sizeof(float));
         std::vector<unsigned char> iv, tag;
@@ -182,6 +203,11 @@ public:
         req.set_last_received_round(0);
         req.set_tenant_id(kTenantId);
         req.set_model_id(kModelId);
+        std::vector<unsigned char> stream_public_key;
+        std::vector<unsigned char> stream_secret_key;
+        if (CryptoEngine::GenerateKemKeypair(stream_public_key, stream_secret_key)) {
+            req.set_client_kem_public_key(std::string(stream_public_key.begin(), stream_public_key.end()));
+        }
 
         ClientContext context;
         auto reader = stub_->StreamGlobalModel(&context, req);
@@ -194,9 +220,25 @@ public:
             return;
         }
 
-        std::vector<unsigned char> session_key = CryptoEngine::DeriveSessionKeyWithSecret(
-            payload_secret_,
-            {kTestCertIdentity, kTenantId, kModelId, cid, "stream"});
+        std::vector<unsigned char> session_key;
+        if (update.key_agreement() == "ml-kem-1024") {
+            std::vector<unsigned char> kem_ciphertext(update.kem_ciphertext().begin(),
+                                                      update.kem_ciphertext().end());
+            std::vector<unsigned char> shared_secret;
+            if (!CryptoEngine::DecapsulateKem(stream_secret_key, kem_ciphertext, shared_secret)) {
+                std::cout << "[Node " << cid << "] Stream ML-KEM-1024 decapsulation failed" << std::endl;
+                return;
+            }
+            session_key = CryptoEngine::DeriveSessionKeyFromKemSecret(
+                shared_secret,
+                {kTestCertIdentity, kTenantId, kModelId, cid, "stream"});
+            std::cout << "[Node " << cid << "] Stream ML-KEM-1024 decapsulation succeeded, ciphertext_bytes="
+                      << kem_ciphertext.size() << std::endl;
+        } else {
+            session_key = CryptoEngine::DeriveSessionKeyWithSecret(
+                payload_secret_,
+                {kTestCertIdentity, kTenantId, kModelId, cid, "stream"});
+        }
         std::vector<unsigned char> iv(update.iv().begin(), update.iv().end());
         std::vector<unsigned char> tag(update.auth_tag().begin(), update.auth_tag().end());
         std::string plaintext = CryptoEngine::DecryptWithKey(
@@ -232,8 +274,90 @@ public:
         std::cout << "[Node " << cid << "] Received global model round "
                   << update.round_index() << " via " << update.aggregation_method()
                   << ", version=" << update.model_version()
+                  << ", key_agreement=" << update.key_agreement()
                   << ", signature verified=" << (signature_ok ? "true" : "false")
                   << ", params=" << float_count << std::endl;
+    }
+
+    bool StreamCancellationTest(const std::string& cid) {
+        Register(cid);
+        ModelRequest req;
+        req.set_client_id(cid);
+        req.set_last_received_round(0);
+        req.set_tenant_id(kTenantId);
+        req.set_model_id(kModelId);
+
+        ClientContext context;
+        auto reader = stub_->StreamGlobalModel(&context, req);
+        context.TryCancel();
+        GlobalModelUpdate update;
+        (void)reader->Read(&update);
+        Status status = reader->Finish();
+        bool passed = status.error_code() == grpc::StatusCode::CANCELLED;
+        std::cout << "[StreamTest] cancellation_mid_stream=" << (passed ? "PASS" : "FAIL")
+                  << " code=" << status.error_code()
+                  << " message=" << status.error_message() << std::endl;
+        return passed;
+    }
+
+    bool SlowConsumerBackpressureTest(const std::string& cid) {
+        Register(cid);
+        ModelRequest req;
+        req.set_client_id(cid);
+        req.set_last_received_round(0);
+        req.set_tenant_id(kTenantId);
+        req.set_model_id(kModelId);
+
+        ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+        auto reader = stub_->StreamGlobalModel(&context, req);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        GlobalModelUpdate update;
+        bool read_ok = reader->Read(&update);
+        context.TryCancel();
+        Status status = reader->Finish();
+        bool passed = read_ok && update.round_index() > 0 &&
+                      (!status.ok() || status.error_code() == grpc::StatusCode::CANCELLED);
+        std::cout << "[StreamTest] slow_consumer_backpressure=" << (passed ? "PASS" : "FAIL")
+                  << " read_ok=" << (read_ok ? "true" : "false")
+                  << " round=" << update.round_index()
+                  << " finish_code=" << status.error_code() << std::endl;
+        return passed;
+    }
+
+    bool ConcurrentStreamTest() {
+        std::vector<std::thread> threads;
+        std::vector<bool> results(3, false);
+        for (int i = 0; i < 3; ++i) {
+            threads.emplace_back([this, i, &results]() {
+                std::string cid = "stream-concurrent-" + std::to_string(i + 1);
+                Register(cid);
+                ModelRequest req;
+                req.set_client_id(cid);
+                req.set_last_received_round(0);
+                req.set_tenant_id(kTenantId);
+                req.set_model_id(kModelId);
+                ClientContext context;
+                context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+                auto reader = stub_->StreamGlobalModel(&context, req);
+                GlobalModelUpdate update;
+                bool read_ok = reader->Read(&update);
+                context.TryCancel();
+                Status status = reader->Finish();
+                results[i] = read_ok && update.round_index() > 0 &&
+                             (!status.ok() || status.error_code() == grpc::StatusCode::CANCELLED);
+            });
+        }
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        bool passed = true;
+        for (bool result : results) {
+            passed = passed && result;
+        }
+        std::cout << "[StreamTest] concurrent_worker_connections=" << (passed ? "PASS" : "FAIL")
+                  << " clients=" << results.size() << std::endl;
+        return passed;
     }
 
 private:
@@ -243,6 +367,7 @@ private:
 
 int main(int argc, char** argv) {
     std::cout << "\n>>> ALLOCATING PQ-mTLS SECURE CHANNELS...\n";
+    bool stream_tests_only = argc > 1 && std::string(argv[1]) == "--stream-tests";
     const char* env_address = std::getenv("PQFL_ADDRESS");
     std::string cert_dir = "/app/certs";
     const char* env_payload_path = std::getenv("PQFL_PAYLOAD_KEY_PATH");
@@ -257,6 +382,22 @@ int main(int argc, char** argv) {
     std::vector<unsigned char> payload_secret = CryptoEngine::LoadSecretFile(payload_path);
     FLTestClient client1(grpc::CreateChannel(address, creds), payload_secret);
     FLTestClient client2(grpc::CreateChannel(address, creds), payload_secret);
+
+    if (stream_tests_only) {
+        client1.Register("stream-seed-1");
+        client2.Register("stream-seed-2");
+        TrainingConfig seed_cfg1 = client1.FetchConfig("stream-seed-1");
+        TrainingConfig seed_cfg2 = client2.FetchConfig("stream-seed-2");
+        client1.SendWeights("stream-seed-1", {0.1f, 0.2f, -0.1f, 0.4f}, seed_cfg1);
+        client2.SendWeights("stream-seed-2", {0.2f, 0.1f, -0.2f, 0.3f}, seed_cfg2);
+
+        bool ok = true;
+        ok = client1.StreamCancellationTest("stream-cancel-client") && ok;
+        ok = client1.SlowConsumerBackpressureTest("stream-slow-client") && ok;
+        ok = client1.ConcurrentStreamTest() && ok;
+        std::cout << "[StreamTest] async_cq_stream_tests=" << (ok ? "PASS" : "FAIL") << std::endl;
+        return ok ? 0 : 1;
+    }
 
     std::cout << ">>> EDGE CLIENTS CONNECTING...\n\n";
     client1.Register("edge-client-1");

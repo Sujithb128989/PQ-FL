@@ -37,6 +37,7 @@ CryptoEngine::CryptoEngine(const std::string& key_path, const std::string& paylo
       key_registry_path_(key_path + ".meta.json"),
       payload_key_path_(payload_key_path.empty() ? key_path + ".payload" : payload_key_path) {
     LoadOrGenerateKey();
+    InitializeKem();
 }
 
 CryptoEngine::~CryptoEngine() {
@@ -48,6 +49,12 @@ CryptoEngine::~CryptoEngine() {
     }
     if (!payload_secret_.empty()) {
         OPENSSL_cleanse(payload_secret_.data(), payload_secret_.size());
+    }
+    if (!kem_secret_key_.empty()) {
+        OPENSSL_cleanse(kem_secret_key_.data(), kem_secret_key_.size());
+    }
+    if (kem_ != nullptr) {
+        OQS_KEM_free(kem_);
     }
 }
 
@@ -166,6 +173,20 @@ void CryptoEngine::LoadOrGeneratePayloadSecret() {
         std::filesystem::perm_options::replace);
 }
 
+void CryptoEngine::InitializeKem() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    kem_ = OQS_KEM_new(OQS_KEM_alg_ml_kem_1024);
+    if (kem_ == nullptr) {
+        throw std::runtime_error("Failed to initialize ML-KEM-1024");
+    }
+
+    kem_public_key_.assign(kem_->length_public_key, 0);
+    kem_secret_key_.assign(kem_->length_secret_key, 0);
+    if (OQS_KEM_keypair(kem_, kem_public_key_.data(), kem_secret_key_.data()) != OQS_SUCCESS) {
+        throw std::runtime_error("Failed to generate ML-KEM-1024 payload keypair");
+    }
+}
+
 std::string CryptoEngine::Encrypt(const std::string& plaintext,
                                   std::vector<unsigned char>& iv_out,
                                   std::vector<unsigned char>& tag_out) {
@@ -276,6 +297,90 @@ std::vector<unsigned char> CryptoEngine::LoadSecretFile(const std::string& path)
 std::vector<unsigned char> CryptoEngine::DeriveSessionKey(const std::vector<std::string>& context_parts) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return DeriveSessionKeyWithSecret(payload_secret_, context_parts);
+}
+
+std::vector<unsigned char> CryptoEngine::GetKemPublicKey() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return kem_public_key_;
+}
+
+std::vector<unsigned char> CryptoEngine::DeriveKemSessionKey(
+    const std::vector<std::string>& context_parts,
+    const std::vector<unsigned char>& kem_ciphertext) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (kem_ == nullptr) {
+        throw std::runtime_error("ML-KEM-1024 is not initialized");
+    }
+    if (kem_ciphertext.size() != kem_->length_ciphertext) {
+        throw std::runtime_error("Invalid ML-KEM-1024 ciphertext length");
+    }
+
+    std::vector<unsigned char> shared_secret(kem_->length_shared_secret, 0);
+    if (OQS_KEM_decaps(kem_,
+                       shared_secret.data(),
+                       kem_ciphertext.data(),
+                       kem_secret_key_.data()) != OQS_SUCCESS) {
+        throw std::runtime_error("ML-KEM-1024 decapsulation failed");
+    }
+    return DeriveSessionKeyFromKemSecret(shared_secret, context_parts);
+}
+
+std::vector<unsigned char> CryptoEngine::DeriveSessionKeyFromKemSecret(
+    const std::vector<unsigned char>& kem_secret,
+    const std::vector<std::string>& context_parts) {
+    return DeriveSessionKeyWithSecret(kem_secret, context_parts);
+}
+
+bool CryptoEngine::EncapsulateKem(const std::vector<unsigned char>& public_key,
+                                  std::vector<unsigned char>& kem_ciphertext,
+                                  std::vector<unsigned char>& shared_secret) {
+    OQS_KEM* kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_1024);
+    if (kem == nullptr) {
+        return false;
+    }
+    if (public_key.size() != kem->length_public_key) {
+        OQS_KEM_free(kem);
+        return false;
+    }
+    kem_ciphertext.assign(kem->length_ciphertext, 0);
+    shared_secret.assign(kem->length_shared_secret, 0);
+    bool ok = OQS_KEM_encaps(kem, kem_ciphertext.data(), shared_secret.data(), public_key.data()) == OQS_SUCCESS;
+    OQS_KEM_free(kem);
+    return ok;
+}
+
+bool CryptoEngine::GenerateKemKeypair(std::vector<unsigned char>& public_key,
+                                      std::vector<unsigned char>& secret_key) {
+    OQS_KEM* kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_1024);
+    if (kem == nullptr) {
+        return false;
+    }
+    public_key.assign(kem->length_public_key, 0);
+    secret_key.assign(kem->length_secret_key, 0);
+    bool ok = OQS_KEM_keypair(kem, public_key.data(), secret_key.data()) == OQS_SUCCESS;
+    OQS_KEM_free(kem);
+    return ok;
+}
+
+bool CryptoEngine::DecapsulateKem(const std::vector<unsigned char>& secret_key,
+                                  const std::vector<unsigned char>& kem_ciphertext,
+                                  std::vector<unsigned char>& shared_secret) {
+    OQS_KEM* kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_1024);
+    if (kem == nullptr) {
+        return false;
+    }
+    if (secret_key.size() != kem->length_secret_key ||
+        kem_ciphertext.size() != kem->length_ciphertext) {
+        OQS_KEM_free(kem);
+        return false;
+    }
+    shared_secret.assign(kem->length_shared_secret, 0);
+    bool ok = OQS_KEM_decaps(kem,
+                             shared_secret.data(),
+                             kem_ciphertext.data(),
+                             secret_key.data()) == OQS_SUCCESS;
+    OQS_KEM_free(kem);
+    return ok;
 }
 
 std::vector<unsigned char> CryptoEngine::DeriveSessionKeyWithSecret(

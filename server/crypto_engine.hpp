@@ -8,6 +8,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
+#include <oqs/oqs.h>
 
 // AES-256-GCM encryption for weight payloads and checkpoints.
 // Session keys are derived from a shared secret + per-RPC context.
@@ -38,12 +39,28 @@ public:
     int RotateMasterKey();
 
     std::vector<unsigned char> DeriveSessionKey(const std::vector<std::string>& context_parts) const;
+    std::vector<unsigned char> DeriveKemSessionKey(
+        const std::vector<std::string>& context_parts,
+        const std::vector<unsigned char>& kem_ciphertext) const;
+    std::vector<unsigned char> GetKemPublicKey() const;
+    std::string GetKemAlgorithm() const { return "ML-KEM-1024"; }
 
     // Load a shared application payload secret from disk for demo/test clients.
     static std::vector<unsigned char> LoadSecretFile(const std::string& path);
     static std::vector<unsigned char> DeriveSessionKeyWithSecret(
         const std::vector<unsigned char>& secret,
         const std::vector<std::string>& context_parts);
+    static std::vector<unsigned char> DeriveSessionKeyFromKemSecret(
+        const std::vector<unsigned char>& kem_secret,
+        const std::vector<std::string>& context_parts);
+    static bool EncapsulateKem(const std::vector<unsigned char>& public_key,
+                               std::vector<unsigned char>& kem_ciphertext,
+                               std::vector<unsigned char>& shared_secret);
+    static bool GenerateKemKeypair(std::vector<unsigned char>& public_key,
+                                   std::vector<unsigned char>& secret_key);
+    static bool DecapsulateKem(const std::vector<unsigned char>& secret_key,
+                               const std::vector<unsigned char>& kem_ciphertext,
+                               std::vector<unsigned char>& shared_secret);
 
     // Encrypt with a specific key (for per-client session keys).
     static std::string EncryptWithKey(const unsigned char* key,
@@ -66,9 +83,13 @@ private:
     int active_key_version_ = 1;
     std::unordered_map<int, std::vector<unsigned char>> key_versions_;
     std::vector<unsigned char> payload_secret_;
+    OQS_KEM* kem_ = nullptr;
+    std::vector<unsigned char> kem_public_key_;
+    std::vector<unsigned char> kem_secret_key_;
 
     void LoadOrGenerateKey();
     void LoadOrGeneratePayloadSecret();
+    void InitializeKem();
     void SaveKeyRegistry() const;
     std::string VersionedKeyPath(int version) const;
 };

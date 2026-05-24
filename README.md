@@ -1,154 +1,122 @@
 # PQ-FL
 
-Single-node federated-learning control plane in C++/gRPC with post-quantum TLS, encrypted checkpoints, admin APIs, worker orchestration, and a Python training client.
+Single-node post-quantum federated learning control plane in C++/gRPC with worker orchestration, encrypted payloads, encrypted checkpoints, admin APIs, and a Python MNIST client.
 
-## What it does
+## Current Status
 
-- Registers trainer clients scoped to tenant/model pairs
-- Leases scheduled round assignments from a training job scheduler
-- Accepts encrypted weight payloads over mutual TLS (ML-KEM-1024 + ML-DSA-87)
-- Aggregates updates with `fedavg`, `krum`, or `trimmed_mean`
-- Applies L2 gradient clipping and differential privacy noise
-- Persists encrypted global-model checkpoints with versioned at-rest keys
-- Exposes admin APIs for datasets, jobs, rollback, audit, workers, and key rotation
-- Coordinates external worker sidecars with lease/heartbeat/status tracking
+Verified on 2026-05-24 with:
 
-## Current scope
+```powershell
+docker build -t pqfl-server .
+docker run --rm pqfl-server /app/pqfl_self_test
+powershell -ExecutionPolicy Bypass -File scripts\run_smoke_verification.ps1
+```
 
-This is a single-node control plane with demo workers and a real MNIST training client. It is not a production FL platform — see [Known Limitations](#known-limitations).
+Latest smoke result:
+
+```text
+registered_clients=2
+completed_rounds=2
+total_submissions=4
+stored_models=2
+registered_workers=2
+active_worker_tasks=0
+Smoke verification passed.
+```
+
+The smoke produces both encrypted checkpoints:
+
+```text
+smoke-models/demo-tenant/demo-model/global_model_round_1.bin
+smoke-models/demo-tenant/demo-model/global_model_round_2.bin
+```
 
 ## Architecture
 
 ```mermaid
 graph TD
-    subgraph Clients ["Training Clients"]
-        C1["MNIST Client (Python)"]
-        C2["Worker Sidecar (C++)"]
-    end
-
-    subgraph Server ["PQ-FL Control Plane"]
-        FL["FederatedLearning"]
-        ADMIN["Admin"]
-        WORK["WorkerCoordinator"]
-        STORE["State Store"]
-        BUF["Weight Buffer"]
-        CRYPTO["Crypto Engine"]
-    end
-
-    subgraph Disk ["Persistence"]
-        STATE["data/state.json"]
-        MODELS["models/..."]
-        KEYS["Versioned master keys"]
-    end
-
-    C1 --> FL
-    C2 --> WORK
-    WORK --> FL
-    ADMIN --> STORE
-    FL --> BUF
-    FL --> STORE
-    FL --> CRYPTO
-    WORK --> STORE
-    STORE --> STATE
-    CRYPTO --> KEYS
-    BUF --> MODELS
+    A["Admin client"] --> B["Admin service"]
+    W["Worker sidecar"] --> C["WorkerCoordinator service"]
+    M["Python MNIST client"] --> D["FederatedLearning service"]
+    C --> D
+    D --> E["WeightBuffer + aggregation"]
+    D --> F["StateStore JSON"]
+    C --> F
+    B --> F
+    E --> G["Encrypted model checkpoints"]
+    D --> H["CryptoEngine"]
+    H --> I["ML-KEM-1024 app-layer keys"]
+    H --> J["AES-256-GCM payload/checkpoint encryption"]
+    H --> K["ML-DSA-87 cert/signature support"]
 ```
 
-## Services
+## Implemented
 
-### FederatedLearning
+- Scheduled multi-round training jobs with worker leasing and status transitions.
+- FedAvg, Krum, and trimmed-mean aggregation in `server/federated_service.cpp`.
+- Round advancement after successful aggregation, so jobs progress from round 1 to round 2.
+- Encrypted global model checkpoints with versioned AES-256-GCM at-rest keys.
+- mTLS using OQS/OpenSSL certificates generated with `dilithium5` / ML-DSA-87.
+- Explicit app-layer ML-KEM-1024 fields for payload key agreement on config, worker leases, submissions, and stream messages.
+- Worker demo submits ML-KEM-protected AES-256-GCM payloads when the server advertises a KEM public key.
+- Python MNIST client auto-generates protobuf stubs, auto-selects CUDA when available, uses server-assigned rounds, fetches/decrypts base models, and submits encrypted weights.
+- Smoke regression script verifies two full rounds and both checkpoint files.
 
-Defined in [proto/pqfl.proto](proto/pqfl.proto).
+## Important Limitations
 
-- `RegisterClient` — register an edge client
-- `GetTrainingConfig` — pull hyperparameters and a training assignment
-- `SubmitWeights` — submit encrypted local weight updates
-- `StreamGlobalModel` — receive signed global model updates
+- The reference worker fetches round-2 base models through the live `StreamGlobalModel` RPC and no longer falls back to checkpoint-file loading.
+- The async `StreamGlobalModel` path is covered by cancellation, slow-consumer backpressure, and concurrent-connection smoke tests.
+- Python MNIST participation is implemented and verified separately from the Docker smoke because downloading/installing the PyTorch/MNIST stack is environment and network dependent.
+- Persistence is local JSON plus local checkpoint files, not a database.
+- This is single-node orchestration, not a distributed production FL cluster.
 
-### Admin
+## Quick Start
 
-Defined in [proto/admin.proto](proto/admin.proto).
+Build and run the verified smoke:
 
-- `GetSystemStatus`, `ListModels`, `ListClients`
-- `ListWorkers`, `ListWorkerTasks`
-- `UpsertDataset`, `ListDatasets`
-- `CreateTrainingJob`, `ListTrainingJobs`
-- `RollbackModel`, `RotateAtRestKey`
-- `ListAuditEvents`
-
-### WorkerCoordinator
-
-Defined in [proto/worker.proto](proto/worker.proto).
-
-- `RegisterWorker`, `LeaseTrainingTask`
-- `ReportTaskStatus`, `Heartbeat`
-
-## Security
-
-Transport uses mutual TLS with ML-KEM-1024 key exchange and ML-DSA-87 signatures via OQS-OpenSSL. Weight payloads are encrypted with AES-256-GCM using per-session keys derived from a shared secret and RPC context. Checkpoints are encrypted at rest with versioned master keys. Streamed model updates are signed by the server's ML-DSA-87 private key.
-
-See [docs/crypto-architecture.md](docs/crypto-architecture.md) for the full layered design and [docs/threat-model.md](docs/threat-model.md) for threat analysis.
-
-## Repo layout
-
+```powershell
+docker build -t pqfl-server .
+docker run --rm pqfl-server /app/pqfl_self_test
+powershell -ExecutionPolicy Bypass -File scripts\run_smoke_verification.ps1
 ```
-server/              C++ server and demo clients
+
+Generate certificates manually:
+
+```powershell
+docker run --rm -v "${PWD}/certs-test:/app/certs" pqfl-server /app/scripts/generate_certs.sh /app/certs
+```
+
+Run the MNIST client:
+
+```powershell
+cd clients\mnist
+python -m pip install -r requirements.txt
+python train.py --address localhost:50051 --certs ..\..\certs-test --payload-key ..\..\smoke-data\payload.key --client-id mnist-1 --shard 0 --device auto
+```
+
+`--device auto` uses CUDA automatically when PyTorch sees your GPU.
+
+## Repo Layout
+
+```text
+server/              C++ server, admin client, worker demo, self-test
 proto/               gRPC service definitions
-clients/mnist/       Python MNIST training client
-scripts/             cert generation and smoke tests
+clients/mnist/       Python PyTorch MNIST client
+scripts/             certificate generation and smoke verification
 docs/                crypto architecture and threat model
-proofs/              build and test proof artifacts
+proofs/              prior proof artifacts
 ```
 
-Key source files:
+## Key Files
 
-- `server/main.cpp` — server bootstrap
-- `server/federated_service.cpp` — FL RPCs and aggregation (FedAvg, Krum, Trimmed Mean)
-- `server/admin_service.cpp` — admin RPCs
-- `server/worker_service.cpp` — worker leasing and status tracking
-- `server/state_store.cpp` — persistent state, job scheduler, audit log
-- `server/crypto_engine.cpp` — AES-256-GCM encryption and session key derivation
-- `clients/mnist/train.py` — PyTorch MNIST client with end-to-end encryption
-
-## Quick start
-
-### Docker build + smoke test
-
-```bash
-make build       # build the Docker image (~20 min first time)
-make test        # run offline self-test
-make certs       # generate ML-DSA-87 certificates
-make run         # start the server
-make bootstrap   # create a demo dataset and training job
-make smoke       # run two workers through a full round
-make status      # inspect control-plane state
-```
-
-### MNIST training client
-
-```bash
-cd clients/mnist
-pip install -r requirements.txt
-python -m grpc_tools.protoc -I../../proto --python_out=gen --grpc_python_out=gen ../../proto/pqfl.proto
-mkdir -p gen && touch gen/__init__.py
-python train.py --client-id mnist-1 --shard 0 --round 1
-```
-
-### Admin CLI
-
-```bash
-docker run --rm --network container:pqfl-server-container \
-    -v "$(pwd)/certs:/app/certs:ro" pqfl-server /app/pqfl_admin_cli status
-```
-
-## Known limitations
-
-- Single-node only — no distributed coordination layer
-- The payload encryption secret is shared, not negotiated per-session via KEM
-- State persistence is a local JSON file, not a database
-- The C++ worker demo uses synthetic weights; real training is in the Python client
-- The build targets Docker/Linux only
+- `server/federated_service.cpp`: FL RPCs, aggregation, async CQ handling.
+- `server/state_store.cpp`: jobs, assignments, workers, persisted state.
+- `server/crypto_engine.cpp`: AES-GCM, ML-KEM app-layer helpers, key derivation.
+- `server/worker_service.cpp`: worker registration and task leasing.
+- `server/worker_demo_client.cpp`: reference worker execution path.
+- `clients/mnist/train.py`: GPU-aware MNIST training client.
+- `scripts/run_smoke_verification.ps1`: current end-to-end regression.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE), [COPYRIGHT](COPYRIGHT).
+Apache License 2.0. See `LICENSE`, `NOTICE`, and `COPYRIGHT`.

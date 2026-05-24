@@ -67,6 +67,7 @@ target_include_directories(pqfl_server
 target_link_directories(pqfl_server
     PRIVATE
         /usr/local/lib
+        /opt/openssl/lib
 )
 
 target_link_libraries(pqfl_server
@@ -76,6 +77,7 @@ target_link_libraries(pqfl_server
     protobuf::libprotobuf
     OpenSSL::SSL
     OpenSSL::Crypto
+    oqs
 )
 
 add_executable(pqfl_test_client
@@ -95,6 +97,7 @@ target_include_directories(pqfl_test_client
 target_link_directories(pqfl_test_client
     PRIVATE
         /usr/local/lib
+        /opt/openssl/lib
 )
 target_link_libraries(pqfl_test_client
     PRIVATE
@@ -102,6 +105,7 @@ target_link_libraries(pqfl_test_client
     protobuf::libprotobuf
     OpenSSL::SSL
     OpenSSL::Crypto
+    oqs
 )
 
 add_executable(pqfl_admin_demo
@@ -165,6 +169,7 @@ target_include_directories(pqfl_worker_demo
 target_link_directories(pqfl_worker_demo
     PRIVATE
         /usr/local/lib
+        /opt/openssl/lib
 )
 target_link_libraries(pqfl_worker_demo
     PRIVATE
@@ -172,6 +177,7 @@ target_link_libraries(pqfl_worker_demo
     protobuf::libprotobuf
     OpenSSL::SSL
     OpenSSL::Crypto
+    oqs
 )
 
 add_executable(pqfl_self_test
@@ -186,11 +192,16 @@ target_include_directories(pqfl_self_test
         ${PROTO_DIR}
         ${OpenSSL_INCLUDE_DIR}
 )
+target_link_directories(pqfl_self_test
+    PRIVATE
+        /opt/openssl/lib
+)
 target_link_libraries(pqfl_self_test
     PRIVATE
     protobuf::libprotobuf
     OpenSSL::SSL
     OpenSSL::Crypto
+    oqs
 )
 
 install(TARGETS

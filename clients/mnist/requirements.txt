@@ -4,3 +4,4 @@ protobuf>=4.25.0
 torch>=2.0.0
 torchvision>=0.15.0
 cryptography>=42.0.0
+pqcrypto>=0.1.6

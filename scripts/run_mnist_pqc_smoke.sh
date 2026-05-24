@@ -9,7 +9,12 @@ set -eu
 IMAGE_NAME="${IMAGE_NAME:-pqfl-server}"
 CLIENT_IMAGE_NAME="${CLIENT_IMAGE_NAME:-pqfl-mnist-client}"
 CONTAINER_NAME="${CONTAINER_NAME:-pqfl-pqc-smoke-server}"
-ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+# Get absolute path for volume mounts (use Windows path if in Git Bash)
+if command -v pwd >/dev/null && pwd -W >/dev/null 2>&1; then
+  ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -W)"
+else
+  ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+fi
 CERT_DIR="${ROOT_DIR}/certs-test"
 DATA_DIR="${ROOT_DIR}/smoke-data"
 MODELS_DIR="${ROOT_DIR}/smoke-models"
@@ -23,7 +28,7 @@ mkdir -p "${CERT_DIR}" "${DATA_DIR}" "${MODELS_DIR}"
 
 # Step 1: Build server image
 echo "Step 1: Building PQ-FL server image..."
-docker build -t "${IMAGE_NAME}" "${ROOT_DIR}"
+docker build -t "${IMAGE_NAME}" .
 echo ""
 
 # Step 2: Run self-test
@@ -46,7 +51,7 @@ echo ""
 
 # Step 4: Build MNIST client image (with stunnel + OQS)
 echo "Step 4: Building MNIST client image (stunnel + OQS-OpenSSL)..."
-docker build -t "${CLIENT_IMAGE_NAME}" -f "${ROOT_DIR}/Dockerfile.mnist-client" "${ROOT_DIR}"
+docker build -t "${CLIENT_IMAGE_NAME}" -f Dockerfile.mnist-client .
 echo ""
 
 # Verify stunnel links to OQS-OpenSSL

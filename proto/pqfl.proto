@@ -67,6 +67,8 @@ message TrainingConfig {
   string job_status = 19;
   bool assignment_ready = 20;
   string assignment_message = 21;
+  bytes payload_kem_public_key = 22; // ML-KEM-1024 public key for app-layer payload keys
+  string payload_kem_algorithm = 23; // "ML-KEM-1024"
 }
 
 // --- Weight Submission ---
@@ -84,6 +86,8 @@ message WeightPayload {
   bytes client_nonce = 10;        // Optional per-request entropy to bind app-layer keys
   string job_id = 11;
   string assignment_id = 12;
+  bytes kem_ciphertext = 13;      // ML-KEM-1024 encapsulation to server payload key
+  string key_agreement = 14;      // "ml-kem-1024" or "shared-secret"
 }
 
 message AggregationResponse {
@@ -103,6 +107,7 @@ message ModelRequest {
   int32 last_received_round = 2;  // Client's latest round, server sends newer
   string tenant_id = 3;
   string model_id = 4;
+  bytes client_kem_public_key = 5; // Optional ML-KEM-1024 key for this stream
 }
 
 message GlobalModelUpdate {
@@ -117,4 +122,6 @@ message GlobalModelUpdate {
   int32 model_version = 9;
   int32 key_version = 10;
   bytes server_nonce = 11;
+  bytes kem_ciphertext = 12;      // ML-KEM-1024 encapsulation to client stream key
+  string key_agreement = 13;      // "ml-kem-1024" or "shared-secret"
 }

@@ -147,6 +147,7 @@ public:
     ~FederatedServiceImpl();
 
     void Run(grpc::ServerBuilder& builder);
+    void StartRpcs();
     void HandleRpcs();
 
     ClientRegistry& GetClientRegistry() { return registry_; }
@@ -155,8 +156,14 @@ public:
 private:
     class CallData {
     public:
+        enum class Event { START, REQUEST, WRITE, ALARM, FINISH, DONE };
+        struct Tag {
+            CallData* call;
+            Event event;
+        };
         virtual ~CallData() = default;
-        virtual void Proceed() = 0;
+        virtual void Proceed(bool ok, Event event) = 0;
+        Tag* MakeTag(Event event) { return new Tag{this, event}; }
     };
 
     class RegisterClientCall : public CallData {
@@ -166,7 +173,7 @@ private:
                            ClientRegistry& registry,
                            StateStore& state_store,
                            WeightBuffer& buffer);
-        void Proceed() override;
+        void Proceed(bool ok, Event event) override;
     private:
         pqfl::FederatedLearning::AsyncService* service_;
         grpc::ServerCompletionQueue* cq_;
@@ -188,7 +195,7 @@ private:
                               CryptoEngine& crypto,
                               ClientRegistry& registry,
                               StateStore& state_store);
-        void Proceed() override;
+        void Proceed(bool ok, Event event) override;
     private:
         pqfl::FederatedLearning::AsyncService* service_;
         grpc::ServerCompletionQueue* cq_;
@@ -211,7 +218,7 @@ private:
                           ClientRegistry& registry,
                           StateStore& state_store,
                           WeightBuffer& buffer);
-        void Proceed() override;
+        void Proceed(bool ok, Event event) override;
     private:
         pqfl::FederatedLearning::AsyncService* service_;
         grpc::ServerCompletionQueue* cq_;
@@ -238,17 +245,23 @@ private:
                               StateStore& state_store,
                               WeightBuffer& buffer,
                               const std::function<std::vector<unsigned char>(const std::string&)>& signer);
-        void Proceed() override;
+        void Proceed(bool ok, Event event) override;
     private:
         pqfl::FederatedLearning::AsyncService* service_;
         grpc::ServerCompletionQueue* cq_;
         grpc::ServerContext ctx_;
         pqfl::ModelRequest request_;
+        pqfl::GlobalModelUpdate pending_update_;
         grpc::ServerAsyncWriter<pqfl::GlobalModelUpdate> responder_;
         enum CallStatus { CREATE, PROCESS, STREAM, FINISH };
         CallStatus status_;
         int last_sent_round_ = -1;
         grpc::Alarm alarm_;
+        bool done_notify_in_flight_ = false;
+        bool done_received_ = false;
+        bool write_in_flight_ = false;
+        bool alarm_in_flight_ = false;
+        bool finish_in_flight_ = false;
         CryptoEngine& crypto_;
         ClientRegistry& registry_;
         StateStore& state_store_;
@@ -256,6 +269,9 @@ private:
         std::function<std::vector<unsigned char>(const std::string&)> signer_;
 
         std::vector<unsigned char> DeriveSessionKey();
+        void FinishWithStatus(const grpc::Status& status);
+        void RequestDoneNotification();
+        bool MaybeDeleteAfterTerminalEvent();
     };
 
     CryptoEngine& crypto_;
@@ -266,6 +282,7 @@ private:
 
     pqfl::FederatedLearning::AsyncService service_;
     std::unique_ptr<grpc::ServerCompletionQueue> cq_;
+    std::mutex proceed_mutex_;
 
     std::vector<unsigned char> SignData(const std::string& data);
     void RestorePersistedModels();

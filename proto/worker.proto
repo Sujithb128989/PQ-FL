@@ -60,6 +60,8 @@ message WorkerTaskLeaseResponse {
   float clip_norm = 21;
   float server_momentum = 22;
   string assignment_expires_at = 23;
+  bytes payload_kem_public_key = 24;
+  string payload_kem_algorithm = 25;
 }
 
 message WorkerTaskStatusUpdate {
