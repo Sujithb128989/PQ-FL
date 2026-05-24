@@ -5,19 +5,22 @@
 # to stunnel over localhost plaintext.
 
 # ---------------------------------------------------------------------------
-# STAGE 1: Build stunnel against OQS-OpenSSL
+# STAGE 1: Build stunnel 5.78 against OQS-OpenSSL
 # ---------------------------------------------------------------------------
 # Reuse the PQ-FL server image which already has OQS-OpenSSL at /opt/openssl
 FROM pqfl-server:latest AS oqs-base
 
-FROM ubuntu:focal AS stunnel-builder
+FROM python:3.11-slim-bullseye AS stunnel-builder
 
+# Copy OQS-OpenSSL from server image
+COPY --from=oqs-base /opt/openssl /opt/openssl
+
+# Install build dependencies
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
       build-essential wget ca-certificates \
       && apt-get clean
 
-# Copy OQS-OpenSSL from the pqfl-server image
 COPY --from=oqs-base /opt/openssl /opt/openssl
 ENV PATH="/opt/openssl/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/openssl/lib"
