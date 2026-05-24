@@ -22,10 +22,11 @@ COPY --from=oqs-base /opt/openssl /opt/openssl
 ENV PATH="/opt/openssl/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/openssl/lib"
 
-# Build stunnel 5.72 from source, linked against OQS-OpenSSL
-ARG STUNNEL_VERSION=5.72
-RUN wget -q "https://www.stunnel.org/archive/5.x/stunnel-${STUNNEL_VERSION}.tar.gz" \
+# Build stunnel 5.78 from source, linked against OQS-OpenSSL
+ARG STUNNEL_VERSION=5.78
+RUN wget -q "https://www.stunnel.org/downloads/stunnel-${STUNNEL_VERSION}.tar.gz" \
       -O /tmp/stunnel.tar.gz \
+      --no-check-certificate \
     && cd /tmp \
     && tar xzf stunnel.tar.gz \
     && cd "stunnel-${STUNNEL_VERSION}" \
