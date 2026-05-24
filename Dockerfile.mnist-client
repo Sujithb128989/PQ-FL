@@ -45,19 +45,12 @@ RUN /opt/stunnel/bin/stunnel -version 2>&1 | head -5
 # ---------------------------------------------------------------------------
 # STAGE 2: Python MNIST client runtime
 # ---------------------------------------------------------------------------
-FROM ubuntu:focal
+FROM python:3.11-slim-bullseye
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
-      software-properties-common wget ca-certificates libffi-dev \
-      && add-apt-repository ppa:deadsnakes/ppa \
-      && apt-get update \
-      && apt-get install -y python3.11 python3.11-distutils python3.11-dev \
-      && apt-get clean \
-      && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-      && wget -q https://bootstrap.pypa.io/get-pip.py \
-      && python3 get-pip.py \
-      && rm get-pip.py
+      ca-certificates libffi-dev \
+      && apt-get clean
 
 # Copy OQS-OpenSSL libraries (for stunnel runtime + cert inspection)
 COPY --from=oqs-base /opt/openssl /opt/openssl
@@ -73,7 +66,7 @@ RUN ldconfig
 # Install Python dependencies
 WORKDIR /app
 COPY clients/mnist/requirements.txt /app/requirements.txt
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy client code and proto definitions
 COPY clients/mnist/ /app/client/
