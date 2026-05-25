@@ -37,3 +37,10 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Debug and testing
+debug-data/
+debug-models/
+stunnel-debug.conf
+test.Dockerfile
+testing.md
