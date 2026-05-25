@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-MNIST federated training client for PQ-FL.
+FL training client for PQ-FL.
 
-The client registers with the server, leases the assigned scheduled round,
-loads the latest global model when one exists, trains a local MNIST shard,
-and submits AES-256-GCM encrypted weights back to the control plane.
+This client registers with the PQ-FL server,
+loads the latest global model when one exists, trains a local dataset shard,
+and submits encrypted weights using ML-KEM-1024 for payload key agreement.
 """
 
 import argparse
@@ -43,7 +43,7 @@ def ensure_proto_stubs() -> None:
     except ImportError as exc:
         raise RuntimeError(
             "grpcio-tools is required to generate protobuf stubs. "
-            "Run: pip install -r clients/mnist/requirements.txt"
+            "Run: pip install -r clients/python_fl_client/requirements.txt"
         ) from exc
 
     result = subprocess.run(
@@ -70,8 +70,8 @@ pqfl_pb2 = importlib.import_module("pqfl_pb2")
 pqfl_pb2_grpc = importlib.import_module("pqfl_pb2_grpc")
 
 
-class MnistNet(nn.Module):
-    """Small CNN for MNIST. About 21k parameters."""
+class SimpleCNN(nn.Module):
+    """Small CNN for digit classification. About 21k parameters."""
 
     def __init__(self):
         super().__init__()
@@ -126,7 +126,7 @@ def encapsulate_ml_kem(public_key: bytes) -> tuple[bytes, bytes]:
     except ImportError as exc:
         raise RuntimeError(
             "pqcrypto is required for app-layer ML-KEM-1024. "
-            "Run: pip install -r clients/mnist/requirements.txt"
+            "Run: pip install -r clients/python_fl_client/requirements.txt"
         ) from exc
     ciphertext, shared_secret = ml_kem_1024.encrypt(public_key)
     return ciphertext, shared_secret
@@ -138,7 +138,7 @@ def generate_ml_kem_keypair() -> tuple[bytes, bytes]:
     except ImportError as exc:
         raise RuntimeError(
             "pqcrypto is required for app-layer ML-KEM-1024. "
-            "Run: pip install -r clients/mnist/requirements.txt"
+            "Run: pip install -r clients/python_fl_client/requirements.txt"
         ) from exc
     return ml_kem_1024.generate_keypair()
 
@@ -149,7 +149,7 @@ def decapsulate_ml_kem(secret_key: bytes, ciphertext: bytes) -> bytes:
     except ImportError as exc:
         raise RuntimeError(
             "pqcrypto is required for app-layer ML-KEM-1024. "
-            "Run: pip install -r clients/mnist/requirements.txt"
+            "Run: pip install -r clients/python_fl_client/requirements.txt"
         ) from exc
     return ml_kem_1024.decrypt(secret_key, ciphertext)
 
@@ -284,8 +284,8 @@ def run(args) -> None:
         tenant_id=args.tenant,
         model_id=args.model,
         local_dataset_size=15000,
-        hardware_info=f"python-mnist-client/{device}",
-        dataset_fingerprint=f"mnist-shard-{args.shard}",
+        hardware_info=f"python-fl-client/{device}",
+        dataset_fingerprint=f"dataset-shard-{args.shard}",
     ))
     print(f"registered: accepted={reg.accepted} round={reg.current_round}")
 
@@ -301,7 +301,7 @@ def run(args) -> None:
     if not config.assignment_ready:
         raise RuntimeError(f"server did not assign training work: {config.assignment_message}")
 
-    model = MnistNet().to(device)
+    model = SimpleCNN().to(device)
     round_index = config.assigned_round_index
     print(f"round_source: server-assigned round={round_index}")
     if config.active_model_version > 0:
@@ -330,7 +330,7 @@ def run(args) -> None:
     )
     print(f"trained: loss={loss:.4f} acc={acc:.4f} samples={dataset_size}")
 
-    nonce = f"mnist-{args.client_id}-round-{round_index}"
+    nonce = f"fl-{args.client_id}-round-{round_index}"
     key_context = [
         PEER_IDENTITY,
         args.tenant,
@@ -385,24 +385,20 @@ def run(args) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MNIST FL training client")
-    parser.add_argument("--address", default="localhost:50051")
+    parser = argparse.ArgumentParser(description="Python FL training client")
+    parser.add_argument("--proxy-mode", action="store_true", help="Connect to local stunnel proxy")
+    parser.add_argument("--address", default="localhost:50051", help="Server or proxy address")
     parser.add_argument("--certs", default="/app/certs")
     parser.add_argument("--payload-key", default="/app/data/payload.key")
-    parser.add_argument("--client-id", default="mnist-client-1")
+    parser.add_argument("--client-id", default="python-client-1")
     parser.add_argument("--tenant", default="demo-tenant")
     parser.add_argument("--model", default="demo-model")
-    parser.add_argument("--shard", type=int, default=0, help="MNIST shard index")
+    parser.add_argument("--shard", type=int, default=0, help="Dataset shard index")
     parser.add_argument("--total-shards", type=int, default=4)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--data-dir", default=str(CLIENT_DIR / "data"))
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
-    parser.add_argument(
-        "--proxy-mode",
-        action="store_true",
-        default=False,
-        help="Connect via local stunnel OQS mTLS proxy (insecure channel to localhost)",
-    )
+
     run(parser.parse_args())
 
 

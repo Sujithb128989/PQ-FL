@@ -48,6 +48,8 @@ add_executable(pqfl_server
     admin_service.cpp
     crypto_engine.cpp
     federated_service.cpp
+    client_registry.cpp
+    weight_buffer.cpp
     identity_utils.cpp
     logger.cpp
     config.cpp

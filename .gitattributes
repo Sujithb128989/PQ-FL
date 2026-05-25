@@ -2,3 +2,6 @@
 # they are executable inside Linux-based Docker containers, regardless
 # of the host operating system.
 *.sh eol=lf
+clients/python_fl_client/stunnel-client.conf text eol=lf
+clients/python_fl_client/entrypoint.sh text eol=lf
+scripts/*.sh text eol=lf

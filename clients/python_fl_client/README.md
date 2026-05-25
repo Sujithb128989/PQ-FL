@@ -1,6 +1,6 @@
-# MNIST Training Client
+# Python FL Training Client
 
-A Python federated learning client that trains a small CNN on an MNIST shard and submits encrypted weight updates to the PQ-FL server.
+A Python federated learning client that trains a small CNN on an image dataset shard and submits encrypted weight updates to the PQ-FL server.
 
 ## Setup
 
@@ -22,7 +22,7 @@ mkdir -p gen && touch gen/__init__.py
 ```bash
 # With the server running and certs/payload.key available:
 python train.py \
-    --client-id mnist-worker-1 \
+    --client-id python-worker-1 \
     --round 1 \
     --shard 0 \
     --epochs 1 \
@@ -36,7 +36,7 @@ Run multiple clients with different `--shard` values (0-3) to simulate federated
 
 1. Registers with the PQ-FL server over mutual TLS
 2. Fetches training configuration (learning rate, batch size, aggregation strategy)
-3. Trains a ~21k-parameter CNN on its MNIST shard
+3. Trains a ~21k-parameter CNN on its dataset shard
 4. Derives a per-session AES-256-GCM key using the same HMAC-SHA256 KDF as the C++ server
 5. Encrypts the flattened weight tensor and submits it
 6. Reports whether aggregation was triggered

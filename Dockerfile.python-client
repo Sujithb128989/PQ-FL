@@ -1,4 +1,4 @@
-# Multi-stage build: OQS-OpenSSL stunnel + Python MNIST client
+# Multi-stage build: OQS-OpenSSL stunnel + Python FL client
 #
 # Produces a container where stunnel (compiled against OQS-OpenSSL) handles
 # Dilithium5 mTLS to the PQ-FL server, while the Python gRPC client connects
@@ -10,7 +10,7 @@
 # Reuse the PQ-FL server image which already has OQS-OpenSSL at /opt/openssl
 FROM pqfl-server:latest AS oqs-base
 
-FROM python:3.11-slim-bullseye AS stunnel-builder
+FROM ubuntu:focal AS stunnel-builder
 
 # Copy OQS-OpenSSL from server image
 COPY --from=oqs-base /opt/openssl /opt/openssl
@@ -21,7 +21,6 @@ RUN apt-get update && apt-get install -y \
       build-essential wget ca-certificates \
       && apt-get clean
 
-COPY --from=oqs-base /opt/openssl /opt/openssl
 ENV PATH="/opt/openssl/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/openssl/lib"
 
@@ -46,13 +45,21 @@ RUN wget -q "https://www.stunnel.org/downloads/stunnel-${STUNNEL_VERSION}.tar.gz
 RUN /opt/stunnel/bin/stunnel -version 2>&1 | head -5
 
 # ---------------------------------------------------------------------------
-# STAGE 2: Python MNIST client runtime
+# STAGE 2: Python FL client runtime
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim-bullseye
+FROM ubuntu:focal
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
-      ca-certificates libffi-dev \
+      ca-certificates \
+      wget \
+      python3.9 \
+      python3.9-dev \
+      python3.9-venv \
+      python3.9-distutils \
+      python3-pip \
+      libffi-dev \
+      socat \
       && apt-get clean
 
 # Copy OQS-OpenSSL libraries (for stunnel runtime + cert inspection)
@@ -66,20 +73,25 @@ ENV LD_LIBRARY_PATH="/opt/openssl/lib"
 # Update dynamic linker
 RUN ldconfig
 
-# Install Python dependencies
+# Install Python dependencies using python3.9
 WORKDIR /app
-COPY clients/mnist/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY clients/python_fl_client/requirements.txt /app/requirements.txt
+RUN python3.9 -m pip install --no-cache-dir --upgrade pip setuptools \
+    && python3.9 -m pip install --no-cache-dir -r requirements.txt
+
+# Create an alias so python/python3 points to python3.9
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.9 1
 
 # Copy client code and proto definitions
-COPY clients/mnist/ /app/client/
+COPY clients/python_fl_client/ /app/client/
 COPY proto/ /app/proto/
 
 # Copy stunnel configuration
-COPY clients/mnist/stunnel-client.conf /app/stunnel-client.conf
+COPY clients/python_fl_client/stunnel-client.conf /app/stunnel-client.conf
 
 # Copy entrypoint
-COPY clients/mnist/entrypoint.sh /app/entrypoint.sh
+COPY clients/python_fl_client/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # The proto dir for the client needs to be adjusted since we're

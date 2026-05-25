@@ -1,6 +1,6 @@
 # PQ-FL
 
-Single-node post-quantum federated learning control plane in C++/gRPC with worker orchestration, encrypted payloads, encrypted checkpoints, admin APIs, and a Python MNIST client.
+Single-node post-quantum federated learning control plane in C++/gRPC with worker orchestration, encrypted payloads, encrypted checkpoints, admin APIs, and a Python FL client.
 
 ## Current Status
 
@@ -31,13 +31,30 @@ smoke-models/demo-tenant/demo-model/global_model_round_1.bin
 smoke-models/demo-tenant/demo-model/global_model_round_2.bin
 ```
 
+### End-to-End PQC Integration
+
+The full Python FL pipeline (with PyTorch and CUDA support) has been verified using `bash scripts/run_e2e_integration_test.sh`:
+
+```text
+============================================
+✓ PQ-FL E2E Integration Test PASSED
+============================================
+
+Summary:
+  - Python FL client connected via stunnel OQS mTLS
+  - Dilithium5/ML-DSA-87 client certificate presented
+  - ML-KEM-1024 app-layer key agreement operational
+  - Python federated learning completed 2 rounds with 2 clients
+  - Server verified PQC peer identity from Python client
+```
+
 ## Architecture
 
 ```mermaid
 graph TD
     A["Admin client"] --> B["Admin service"]
     W["Worker sidecar"] --> C["WorkerCoordinator service"]
-    M["Python MNIST client"] --> D["FederatedLearning service"]
+    M["Python FL client"] --> D["FederatedLearning service"]
     C --> D
     D --> E["WeightBuffer + aggregation"]
     D --> F["StateStore JSON"]
@@ -59,14 +76,14 @@ graph TD
 - mTLS using OQS/OpenSSL certificates generated with `dilithium5` / ML-DSA-87.
 - Explicit app-layer ML-KEM-1024 fields for payload key agreement on config, worker leases, submissions, and stream messages.
 - Worker demo submits ML-KEM-protected AES-256-GCM payloads when the server advertises a KEM public key.
-- Python MNIST client auto-generates protobuf stubs, auto-selects CUDA when available, uses server-assigned rounds, fetches/decrypts base models, and submits encrypted weights.
+- Python FL client auto-generates protobuf stubs, auto-selects CUDA when available, uses server-assigned rounds, fetches/decrypts base models, and submits encrypted weights.
 - Smoke regression script verifies two full rounds and both checkpoint files.
 
 ## Important Limitations
 
 - The reference worker fetches round-2 base models through the live `StreamGlobalModel` RPC and no longer falls back to checkpoint-file loading.
 - The async `StreamGlobalModel` path is covered by cancellation, slow-consumer backpressure, and concurrent-connection smoke tests.
-- Python MNIST participation is implemented and verified separately from the Docker smoke because downloading/installing the PyTorch/MNIST stack is environment and network dependent.
+- Python FL client participation is implemented and verified separately from the Docker smoke because downloading/installing the PyTorch stack is environment and network dependent.
 - Persistence is local JSON plus local checkpoint files, not a database.
 - This is single-node orchestration, not a distributed production FL cluster.
 
@@ -86,12 +103,12 @@ Generate certificates manually:
 docker run --rm -v "${PWD}/certs-test:/app/certs" pqfl-server /app/scripts/generate_certs.sh /app/certs
 ```
 
-Run the MNIST client:
+Run the Python FL client:
 
-```powershell
-cd clients\mnist
-python -m pip install -r requirements.txt
-python train.py --address localhost:50051 --certs ..\..\certs-test --payload-key ..\..\smoke-data\payload.key --client-id mnist-1 --shard 0 --device auto
+```bash
+cd clients/python_fl_client
+
+python train.py --address localhost:50051 --certs ../../certs-test --payload-key ../../smoke-data/payload.key --client-id python-client-1 --shard 0 --device auto
 ```
 
 `--device auto` uses CUDA automatically when PyTorch sees your GPU.
@@ -101,7 +118,7 @@ python train.py --address localhost:50051 --certs ..\..\certs-test --payload-key
 ```text
 server/              C++ server, admin client, worker demo, self-test
 proto/               gRPC service definitions
-clients/mnist/       Python PyTorch MNIST client
+clients/python_fl_client/       Python PyTorch FL client
 scripts/             certificate generation and smoke verification
 docs/                crypto architecture and threat model
 proofs/              prior proof artifacts
@@ -114,7 +131,7 @@ proofs/              prior proof artifacts
 - `server/crypto_engine.cpp`: AES-GCM, ML-KEM app-layer helpers, key derivation.
 - `server/worker_service.cpp`: worker registration and task leasing.
 - `server/worker_demo_client.cpp`: reference worker execution path.
-- `clients/mnist/train.py`: GPU-aware MNIST training client.
+- `clients/python_fl_client/train.py`: GPU-aware Python FL training client.
 - `scripts/run_smoke_verification.ps1`: current end-to-end regression.
 
 ## License
