@@ -44,3 +44,15 @@ debug-models/
 stunnel-debug.conf
 test.Dockerfile
 testing.md
+
+# Debug data and models
+debug-data/
+debug-models/
+
+# Debug and testing files
+stunnel-debug.conf
+test.Dockerfile
+testing.md
+
+# Certificates
+certs/*.key
