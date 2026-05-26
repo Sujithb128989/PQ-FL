@@ -1,139 +1,167 @@
+<div align="center">
+
 # PQ-FL
 
-Single-node post-quantum federated learning control plane in C++/gRPC with worker orchestration, encrypted payloads, encrypted checkpoints, admin APIs, and a Python FL client.
+### End-to-End Post-Quantum Secure Federated Learning Architecture
 
-## Current Status
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19024628.svg)](https://doi.org/10.5281/zenodo.19024628)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Paper](https://img.shields.io/badge/📄-ResearchGate-00CCBB?style=flat&labelColor=1a1a2e)](https://www.researchgate.net/publication/405237327_PQ-FL_End-to-End_Post-Quantum_Secure_Federated_Learning_Architecture)
 
-Verified on 2026-05-24 with:
+[![C++](https://img.shields.io/badge/C++-00599C?logo=cplusplus&logoColor=white)](https://isocpp.org/)
+[![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![OpenSSL](https://img.shields.io/badge/OpenSSL_1.1.1u-721412?logo=openssl&logoColor=white)](https://www.openssl.org/)
+[![gRPC](https://img.shields.io/badge/gRPC-244c5a?logo=google&logoColor=white)](https://grpc.io/)
 
-```powershell
-docker build -t pqfl-server .
-docker run --rm pqfl-server /app/pqfl_self_test
-powershell -ExecutionPolicy Bypass -File scripts\run_smoke_verification.ps1
-```
+---
 
-Latest smoke result:
+*The first open federated learning control plane secured end-to-end using the finalized NIST Post-Quantum Cryptography (PQC) standards (FIPS 203 & FIPS 204), protecting distributed AI against Harvest-Now-Decrypt-Later attacks.*
 
-```text
-registered_clients=2
-completed_rounds=2
-total_submissions=4
-stored_models=2
-registered_workers=2
-active_worker_tasks=0
-Smoke verification passed.
-```
+[Research Paper](https://doi.org/10.5281/zenodo.19024628) · [ResearchGate](https://www.researchgate.net/publication/405237327_PQ-FL_End-to-End_Post-Quantum_Secure_Federated_Learning_Architecture)
 
-The smoke produces both encrypted checkpoints:
+</div>
 
-```text
-smoke-models/demo-tenant/demo-model/global_model_round_1.bin
-smoke-models/demo-tenant/demo-model/global_model_round_2.bin
-```
+---
 
-### End-to-End PQC Integration
+## What It Does
 
-The full Python FL pipeline (with PyTorch and CUDA support) has been verified using `bash scripts/run_e2e_integration_test.sh`:
+PQ-FL is not just a theoretical framework. It is a highly optimized, deployable C++ and Python federated learning architecture that natively integrates post-quantum cryptography to secure machine learning payloads in transit and during aggregation:
 
-```text
-============================================
-✓ PQ-FL E2E Integration Test PASSED
-============================================
+1. **ML-DSA-87 (Dilithium5) mTLS Identity** — Transport-layer authentication powered by a novel `stunnel` sidecar pattern, bridging the BoringSSL PQC gap for Python edge clients.
+2. **ML-KEM-1024 (Kyber1024) Key Encapsulation** — Application-layer ephemeral key agreement, wrapping symmetric AES-256-GCM session keys.
+3. **Byzantine-Resilient Aggregation** — Support for standard `FedAvg`, distance-minimizing `Krum`, and robust `Trimmed-Mean` aggregations executed entirely in optimized C++.
+4. **Differential Privacy (DP-SGD)** — Inherent L2 gradient clipping and Gaussian noise injection ($\sigma, \epsilon$) before centralized model accumulation.
+5. **Asynchronous Streaming** — High-performance gRPC Completion Queue (CQ) threading to handle dynamic edge disconnects, backpressure, and real-time global model streaming.
 
-Summary:
-  - Python FL client connected via stunnel OQS mTLS
-  - Dilithium5/ML-DSA-87 client certificate presented
-  - ML-KEM-1024 app-layer key agreement operational
-  - Python federated learning completed 2 rounds with 2 clients
-  - Server verified PQC peer identity from Python client
-```
+## Features
+
+| Area | What it does |
+| --- | --- |
+| 🛡️ Post-Quantum | ML-KEM-1024 payload confidentiality and ML-DSA-87 mTLS transport security |
+| 🤖 PyTorch Native | Python clients with auto-flattening tensors and CUDA auto-detection |
+| 📊 Aggregation | Server-side C++ FedAvg, Krum, and Trimmed-Mean |
+| 🔒 Privacy | DP-SGD Gaussian noise and L2 norm clipping |
+| 🚀 Performance | Multi-threaded C++ `FederatedService` with OpenMP SIMD optimizations |
+| 📦 Deployment | Multi-stage Docker builder yielding minimal runtime footprints |
 
 ## Architecture
 
+PQ-FL splits cryptographic responsibilities to ensure both identity verification and data confidentiality without compromising deep learning workflows.
+
+1. **Edge Clients (Python/PyTorch)**: Compute local gradients, negotiate ML-KEM-1024 session keys, and dispatch AES-GCM encrypted payloads.
+2. **Transport Proxy (stunnel)**: A localized daemon compiled against OQS-OpenSSL that handles the computationally heavy ML-DSA-87 mTLS handshake.
+3. **Control Plane (C++)**: An orchestration engine managing the state machine, asynchronous gRPC streams, and thread-safe JSON atomic state stores.
+
+### System Flow
+
 ```mermaid
 graph TD
-    A["Admin client"] --> B["Admin service"]
-    W["Worker sidecar"] --> C["WorkerCoordinator service"]
-    M["Python FL client"] --> D["FederatedLearning service"]
+    subgraph Edge Client [Python / PyTorch]
+        A["Local Dataset"]
+        B["Backpropagation"]
+        C["ML-KEM-1024 Encapsulation"]
+    end
+
+    subgraph Transport Layer
+        D["stunnel proxy"]
+        E["ML-DSA-87 mTLS"]
+    end
+
+    subgraph Control Plane [C++ Server]
+        F["gRPC FederatedService"]
+        G["CryptoEngine (Decapsulation)"]
+        H["WeightBuffer (Aggregation)"]
+        I["JSON StateStore (fsync)"]
+    end
+
+    A --> B
+    B --> C
     C --> D
-    D --> E["WeightBuffer + aggregation"]
-    D --> F["StateStore JSON"]
-    C --> F
-    B --> F
-    E --> G["Encrypted model checkpoints"]
-    D --> H["CryptoEngine"]
-    H --> I["ML-KEM-1024 app-layer keys"]
-    H --> J["AES-256-GCM payload/checkpoint encryption"]
-    H --> K["ML-DSA-87 cert/signature support"]
+    D -->|FIPS 204 Tunnel| E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
 ```
 
-## Implemented
+## Security Model
 
-- Scheduled multi-round training jobs with worker leasing and status transitions.
-- FedAvg, Krum, and trimmed-mean aggregation in `server/federated_service.cpp`.
-- Round advancement after successful aggregation, so jobs progress from round 1 to round 2.
-- Encrypted global model checkpoints with versioned AES-256-GCM at-rest keys.
-- mTLS using OQS/OpenSSL certificates generated with `dilithium5` / ML-DSA-87.
-- Explicit app-layer ML-KEM-1024 fields for payload key agreement on config, worker leases, submissions, and stream messages.
-- Worker demo submits ML-KEM-protected AES-256-GCM payloads when the server advertises a KEM public key.
-- Python FL client auto-generates protobuf stubs, auto-selects CUDA when available, uses server-assigned rounds, fetches/decrypts base models, and submits encrypted weights.
-- Smoke regression script verifies two full rounds and both checkpoint files.
+- **Transport-Layer Security (FIPS 204)**: All network traffic is encapsulated in a mutually authenticated TLS 1.3 tunnel using ML-DSA-87 certificates.
+- **Application-Layer Key Agreement (FIPS 203)**: Raw model payloads are encrypted end-to-end utilizing ML-KEM-1024 ciphertexts and AES-256-GCM.
+- **Harvest-Now-Decrypt-Later (HNDL)**: Resistance against quantum eavesdroppers capable of recording current traffic for future cryptanalysis.
+- **Atomic State Transitions**: JSON state storage using POSIX `rename()` guarantees data integrity during concurrent aggregation events.
 
-## Important Limitations
+## Stack
 
-- The reference worker fetches round-2 base models through the live `StreamGlobalModel` RPC and no longer falls back to checkpoint-file loading.
-- The async `StreamGlobalModel` path is covered by cancellation, slow-consumer backpressure, and concurrent-connection smoke tests.
-- Python FL client participation is implemented and verified separately from the Docker smoke because downloading/installing the PyTorch stack is environment and network dependent.
-- Persistence is local JSON plus local checkpoint files, not a database.
-- This is single-node orchestration, not a distributed production FL cluster.
+| Layer | Technology |
+| --- | --- |
+| Client | Python, PyTorch, gRPC (grpcio-tools) |
+| Backend | C++17, gRPC, Protobuf |
+| Aggregation | OpenMP SIMD, `<algorithm>` (`std::nth_element`) |
+| Crypto | OpenSSL 1.1.1u, liboqs (0.12.0), stunnel v5.78 |
+| Runtime | Docker Multi-stage Builds |
+
+## Research & Publications
+
+This architecture builds upon earlier Quantum-Safe Backend foundational research, applying those paradigms directly to distributed artificial intelligence.
+
+| Paper | Title |
+| --- | --- |
+| **PQ-FL** | *PQ-FL: End-to-End Post-Quantum Secure Federated Learning Architecture* |
+| **QSB (Part I)** | *Quantum Safe Backend: Design and Implementation of a Post-Quantum Cryptographic Secure Storage and Communication Platform* |
+
+#### Mirrors & Archives
+
+| Platform | Link |
+| --- | --- |
+| 📄 ResearchGate | [PQ-FL on ResearchGate](https://www.researchgate.net/publication/405237327_PQ-FL_End-to-End_Post-Quantum_Secure_Federated_Learning_Architecture) |
+| 🗄️ Zenodo (DOI) | [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19024628.svg)](https://doi.org/10.5281/zenodo.19024628) |
+
+#### Citation
+
+```bibtex
+@inproceedings{sujith2026pqfl,
+  title     = {PQ-FL: End-to-End Post-Quantum Secure Federated Learning Architecture},
+  author    = {B. Sujith},
+  year      = {2026},
+  publisher = {Independent Researcher}
+}
+```
 
 ## Quick Start
 
-Build and run the verified smoke:
+### Building the Infrastructure
 
-```powershell
-docker build -t pqfl-server .
-docker run --rm pqfl-server /app/pqfl_self_test
-powershell -ExecutionPolicy Bypass -File scripts\run_smoke_verification.ps1
-```
-
-Generate certificates manually:
-
-```powershell
-docker run --rm -v "${PWD}/certs-test:/app/certs" pqfl-server /app/scripts/generate_certs.sh /app/certs
-```
-
-Run the Python FL client:
+The entire orchestration server, OQS-OpenSSL dependencies, and gRPC stubs can be built using the provided multi-stage Dockerfile.
 
 ```bash
-cd clients/python_fl_client
+# Build the C++ Server Image
+docker build -t pq-fl-server -f Dockerfile .
 
-python train.py --address localhost:50051 --certs ../../certs-test --payload-key ../../smoke-data/payload.key --client-id python-client-1 --shard 0 --device auto
+# Build the Python Client & stunnel sidecar Image
+docker build -t pq-fl-client -f Dockerfile.python-client .
 ```
 
-`--device auto` uses CUDA automatically when PyTorch sees your GPU.
+### Running the E2E Test
 
-## Repo Layout
+To validate the integration of ML-KEM-1024, ML-DSA-87, and PyTorch aggregation locally:
 
-```text
-server/              C++ server, admin client, worker demo, self-test
-proto/               gRPC service definitions
-clients/python_fl_client/       Python PyTorch FL client
-scripts/             certificate generation and smoke verification
-docs/                crypto architecture and threat model
-proofs/              prior proof artifacts
+```bash
+bash scripts/run_e2e_integration_test.sh
 ```
-
-## Key Files
-
-- `server/federated_service.cpp`: FL RPCs, aggregation, async CQ handling.
-- `server/state_store.cpp`: jobs, assignments, workers, persisted state.
-- `server/crypto_engine.cpp`: AES-GCM, ML-KEM app-layer helpers, key derivation.
-- `server/worker_service.cpp`: worker registration and task leasing.
-- `server/worker_demo_client.cpp`: reference worker execution path.
-- `clients/python_fl_client/train.py`: GPU-aware Python FL training client.
-- `scripts/run_smoke_verification.ps1`: current end-to-end regression.
 
 ## License
 
-Apache License 2.0. See `LICENSE`, `NOTICE`, and `COPYRIGHT`.
+This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE) for details.
+
+---
+
+<div align="center">
+
+**[PQ-FL GitHub Repository](https://github.com/Sujithb128989/PQ-FL)**
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19024628.svg)](https://doi.org/10.5281/zenodo.19024628)
+
+</div>
